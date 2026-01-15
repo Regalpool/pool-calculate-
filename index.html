@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Regal Pool Pump Tool</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="bar">
+  <div class="t">Pool Pump Sizing Tool</div>
+  <div class="a">
+    <button id="btnExport">Export JSON</button>
+    <label class="file">Import JSON<input id="fileImport" type="file" accept=".json"></label>
+    <button id="btnPrint">Print</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="grid">
+    <div class="card">
+      <h2>Project</h2>
+      <div class="g2">
+        <label>Client / Project Name<input id="clientName" placeholder="e.g., Johnson Residence"></label>
+        <label>City / State<input id="location" placeholder="e.g., Houston, TX"></label>
+        <label>Pool Volume (gallons)<input id="poolVolume" type="number" min="0" placeholder="e.g., 18000"></label>
+        <label>Turnover (hours)
+          <div class="row">
+            <select id="turnoverPreset">
+              <option value="6">6</option><option value="8" selected>8</option>
+              <option value="10">10</option><option value="12">12</option>
+              <option value="custom">Custom</option>
+            </select>
+            <input id="turnoverCustom" type="number" min="1" step="0.5" placeholder="Custom" disabled>
+          </div>
+        </label>
+      </div>
+
+      <div class="row between">
+        <h3>Water Features</h3>
+        <button id="addWF">+ Add</button>
+      </div>
+
+      <div class="tbl">
+        <div class="th">
+          <div>Type</div><div class="r">Qty</div><div class="r">Width (ft)</div><div class="r">GPM / ft</div><div class="r">Row GPM</div><div></div>
+        </div>
+        <div id="wfBody"></div>
+      </div>
+
+      <div class="sum">
+        <div><span>Turnover Flow</span><b id="turnoverGpm">—</b></div>
+        <div><span>Water Features Flow</span><b id="wfGpm">—</b></div>
+        <div class="tot"><span>Total Required Flow</span><b id="totalGpm">—</b></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <h2>Pumps</h2>
+        <button id="addPump">+ Add Pump</button>
+      </div>
+
+      <div class="tbl">
+        <div class="th pumps">
+          <div>Pump Model</div><div class="r">Qty</div><div>System</div><div class="r">TDH (ft)</div><div class="r">Result</div><div></div>
+        </div>
+        <div id="pumpBody"></div>
+      </div>
+
+      <div class="row between" style="margin-top:12px">
+        <h3>Curve Viewer</h3>
+        <button id="btnEditCurves">Edit Curves</button>
+      </div>
+
+      <div class="chart"><canvas id="curveChart"></canvas></div>
+
+      <details class="eng">
+        <summary>Engineering Inputs (optional TDH estimator)</summary>
+        <div class="g2">
+          <label>Pipe size (in)
+            <select id="pipeSize"><option value="1.5">1.5</option><option value="2">2</option><option value="2.5" selected>2.5</option><option value="3">3</option></select>
+          </label>
+          <label>Equivalent length (ft)<input id="pipeLength" type="number" min="0" step="1" placeholder="e.g., 120"></label>
+          <label>Elevation (ft)<input id="elev" type="number" step="0.5" placeholder="e.g., 5"></label>
+          <label>Equipment head (ft)<input id="equipHead" type="number" step="0.5" value="10"></label>
+          <label>C (Hazen–Williams)<input id="cHw" type="number" value="140"></label>
+          <label>Apply TDH to
+            <select id="applyTo"><option value="pool">Pool</option><option value="water">Water Feature</option><option value="shared" selected>Shared</option><option value="all">All</option></select>
+          </label>
+        </div>
+        <div class="row between">
+          <button id="btnEstimateTdh">Estimate TDH</button>
+          <div class="pill" id="tdhOut">TDH: —</div>
+        </div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="curvesModal" aria-hidden="true">
+  <div class="mcard">
+    <div class="row between">
+      <div>
+        <b>Pump Curves</b>
+        <div class="small">Paste points: <b>GPM,TDH</b> (one per line)</div>
+      </div>
+      <button id="btnCloseCurves">Close</button>
+    </div>
+    <div id="curveTabs" class="tabs"></div>
+    <div class="row between" style="margin-top:8px">
+      <span class="small">RPM Lines</span>
+      <button id="btnAddCurveLine">+ Add RPM</button>
+    </div>
+    <div id="curveLines"></div>
+    <div class="row between" style="margin-top:10px">
+      <button id="btnResetCurves">Reset Defaults</button>
+      <button id="btnSaveCurves">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
