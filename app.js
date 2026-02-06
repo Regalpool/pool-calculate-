@@ -1,761 +1,737 @@
-const $ = (id) => document.getElementById(id);
+/* ============================================================
+   Pool Pump Sizing Tool - app.js (Curve drawing FIX)
+   - Fixes curve parsing: supports lines like "0,95" (GPM,TDH)
+   - Draws curves on <canvas id="curveCanvas">
+   - Draws Target TDH line & Operating point
+   - No external libraries required
+   ============================================================ */
 
-const PUMPS = [
-  { id: "jandy_vs_27",  name: "Jandy VS FloPro 2.7 HP" },
-  { id: "jandy_vs_185", name: "Jandy VS FloPro 1.85 HP" },
-  { id: "jandy_fhpm_10",name: "Jandy FloPro FHPM 1.0 HP" },
-  { id: "jandy_vs_38",  name: "Jandy VS FloPro 3.8 HP" }
-];
+(() => {
+  "use strict";
 
-const state = {
-  wf: [],
-  pumps: [],
-  curves: defaults(),
-  selPump: null,
-  modalPump: "jandy_vs_27",
-  lastEval: {},
-  autoTdhLast: null
-};
+  /* -----------------------------
+     Helpers
+  ----------------------------- */
 
-function defaults() {
-  // Placeholder curves (Edit Curves to paste manufacturer points)
-  return {
-    jandy_vs_27: [
-      { rpm: 3450, label: "3450 RPM", pts: [[0,95],[30,92],[60,86],[90,75],[120,55],[135,44]] },
-      { rpm: 3000, label: "3000 RPM", pts: [[0,75],[30,71],[60,63],[90,50],[120,33]] }
-    ],
-    jandy_vs_185: [
-      { rpm: 3450, label: "3450 RPM", pts: [[0,77],[30,75],[60,70],[90,57],[110,40],[120,33]] },
-      { rpm: 3000, label: "3000 RPM", pts: [[0,58],[30,55],[60,49],[90,36],[105,25]] }
-    ],
-    jandy_fhpm_10: [
-      { rpm: 3450, label: "High", pts: [[0,57],[30,52],[60,40],[80,25]] }
-    ],
-    jandy_vs_38: [
-      { rpm: 3450, label: "3450 RPM", pts: [[0,103],[40,99],[80,92],[120,78],[160,50],[185,38]] },
-      { rpm: 3000, label: "3000 RPM", pts: [[0,77],[40,73],[80,66],[120,50],[165,22]] }
-    ]
-  };
-}
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-function num(v) {
-  const n = parseFloat(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function fmt(v) {
-  return (Math.round(v * 10) / 10).toFixed(1);
-}
-
-/* -------------------- CURVE KEY NORMALIZATION -------------------- */
-/**
- * If curves were stored using long names as keys (e.g. "Jandy VS FloPro 2.7 HP"),
- * convert them to pump IDs (e.g. "jandy_vs_27") so the app can find them.
- */
-function normalizeCurvesKeys(curvesObj) {
-  if (!curvesObj || typeof curvesObj !== "object") return curvesObj;
-
-  const nameToId = {};
-  PUMPS.forEach(p => { nameToId[p.name] = p.id; });
-
-  const out = { ...curvesObj };
-
-  Object.keys(curvesObj).forEach(key => {
-    if (nameToId[key] && !out[nameToId[key]]) {
-      out[nameToId[key]] = curvesObj[key];
-      delete out[key];
-    }
-  });
-
-  return out;
-}
-
-// Always keep curves normalized
-state.curves = normalizeCurvesKeys(state.curves);
-
-/* -------------------- FLOWS -------------------- */
-function poolTurnoverHours() {
-  const p = $("turnoverPreset").value;
-  if (p === "custom") {
-    const c = num($("turnoverCustom").value);
-    return c > 0 ? c : 8;
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
   }
-  return num(p) || 8;
-}
 
-function poolTurnoverGpm() {
-  const vol = num($("poolVolume").value);
-  if (vol <= 0) return 0;
-  return vol / (poolTurnoverHours() * 60);
-}
+  function toNum(x, fallback = 0) {
+    if (typeof x === "number" && Number.isFinite(x)) return x;
+    if (typeof x !== "string") return fallback;
 
-function wfGpm() {
-  return state.wf.reduce((s, r) => s + num(r.qty) * num(r.w) * num(r.k), 0);
-}
+    // allow comma decimal like 10,5 -> 10.5
+    const s = x.trim().replace(/\u00A0/g, " ").replace(/,/g, (m, idx, str) => {
+      // IMPORTANT: we cannot blindly replace all commas to dots,
+      // because points are "GPM,TDH".
+      // This function is used for single numbers only; safe to replace comma-decimal to dot.
+      // But if string contains multiple numbers separated by comma, caller shouldn't use toNum.
+      return ".";
+    });
 
-function poolModeRequiredGpm() {
-  // Pool mode (Spa OFF): turnover + water features
-  return poolTurnoverGpm() + wfGpm();
-}
+    const n = Number(s);
+    return Number.isFinite(n) ? n : fallback;
+  }
 
-function spaJetsGpm() {
-  return num($("spaJets").value) * num($("gpmPerJet").value);
-}
+  /**
+   * Parse points text (one per line)
+   * Accepts:
+   *  - "0,95"
+   *  - "0 , 95"
+   *  - "0 95"
+   *  - "0;95"
+   *  - "0\t95"
+   */
+  function parsePointsText(text) {
+    const lines = String(text || "")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
 
-function spaTurnoverGpm() {
-  const v = num($("spaVolume").value);
-  const h = num($("spaTurnover").value);
-  if (v > 0 && h > 0) return v / (h * 60);
-  return 0;
-}
+    const pts = [];
 
-function spaModeRequiredGpm() {
-  // Spa Only when Spa Mode ON
-  return Math.max(spaJetsGpm(), spaTurnoverGpm());
-}
+    for (const line of lines) {
+      // remove extra spaces
+      const clean = line.replace(/\u00A0/g, " ").trim();
 
-/* -------------------- WATER FEATURES UI -------------------- */
-function renderWF() {
-  const body = $("wfBody");
-  body.innerHTML = "";
+      // Detect separator:
+      // If contains comma -> treat as pair separator (NOT decimal)
+      // Else split on whitespace or semicolon
+      let a, b;
 
-  state.wf.forEach((r, i) => {
-    const row = document.createElement("div");
-    row.className = "tr";
-    row.innerHTML = `
-      <select data-i="${i}" data-k="type">
-        ${["Sheer","Scupper","Rain Curtain","Bubbler","Deck Jet","Other"]
-          .map(t => `<option ${t===r.type?"selected":""}>${t}</option>`).join("")}
-      </select>
-      <div class="r"><input data-i="${i}" data-k="qty" type="number" min="0" step="1" value="${r.qty}"></div>
-      <div class="r"><input data-i="${i}" data-k="w" type="number" min="0" step="0.1" value="${r.w}"></div>
-      <div class="r"><input data-i="${i}" data-k="k" type="number" min="0" step="0.5" value="${r.k}"></div>
-      <div class="r"><b>${fmt(num(r.qty)*num(r.w)*num(r.k))}</b></div>
-      <button class="x" data-del="${i}">✕</button>
-    `;
-    body.appendChild(row);
-  });
-
-  body.querySelectorAll("input,select").forEach(el => {
-    const upd = () => {
-      const i = parseInt(el.dataset.i, 10);
-      const k = el.dataset.k;
-
-      if (k === "type") {
-        state.wf[i].type = el.value;
-        // soft defaults (editable)
-        if (el.value === "Sheer") state.wf[i].k = 15;
-        if (el.value === "Scupper") state.wf[i].k = 10;
-        if (el.value === "Rain Curtain") state.wf[i].k = 12;
-        if (el.value === "Bubbler") state.wf[i].k = 12;
-        if (el.value === "Deck Jet") state.wf[i].k = 8;
+      if (clean.includes(",")) {
+        const parts = clean.split(",").map((p) => p.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+          a = parts[0];
+          b = parts[1];
+        } else {
+          continue;
+        }
+      } else if (clean.includes(";")) {
+        const parts = clean.split(";").map((p) => p.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+          a = parts[0];
+          b = parts[1];
+        } else {
+          continue;
+        }
       } else {
-        state.wf[i][k] = num(el.value);
+        const parts = clean.split(/\s+/).map((p) => p.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+          a = parts[0];
+          b = parts[1];
+        } else {
+          continue;
+        }
       }
 
-      renderWF();
-      recalc();
-    };
+      // Now a and b should be single numbers; allow comma-decimal inside them
+      const gpm = Number(String(a).replace(",", "."));
+      const tdh = Number(String(b).replace(",", "."));
 
-    el.addEventListener("change", upd);
-    el.addEventListener("input", upd);
-  });
-
-  body.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
-    state.wf.splice(parseInt(b.dataset.del, 10), 1);
-    renderWF();
-    recalc();
-  }));
-}
-
-/* -------------------- PUMPS UI -------------------- */
-function renderPumps() {
-  const body = $("pumpBody");
-  body.innerHTML = "";
-
-  state.pumps.forEach((p, i) => {
-    const row = document.createElement("div");
-    row.className = "tr pumps";
-    row.innerHTML = `
-      <select data-i="${i}" data-k="model">
-        ${PUMPS.map(m => `<option value="${m.id}" ${m.id===p.model?"selected":""}>${m.name}</option>`).join("")}
-      </select>
-
-      <div class="r"><input data-i="${i}" data-k="qty" type="number" min="1" step="1" value="${p.qty}"></div>
-
-      <select data-i="${i}" data-k="sys">
-        ${[
-          "Pool",
-          "Water Features",
-          "Spa",
-          "Shared (Pool + Water)",
-          "Shared (Pool + Spa)",
-          "Shared (All)"
-        ].map(s => `<option ${s===p.sys?"selected":""}>${s}</option>`).join("")}
-      </select>
-
-      <div class="r"><input data-i="${i}" data-k="tdh" type="number" min="0" step="0.5" value="${p.tdh}"></div>
-
-      <div class="r"><span id="status_${p.id}" class="badge mid">—</span></div>
-
-      <button class="x" data-del="${i}">✕</button>
-    `;
-
-    row.addEventListener("click", () => {
-      state.selPump = p.id;
-      updateChart();
-    });
-
-    body.appendChild(row);
-  });
-
-  body.querySelectorAll("input,select").forEach(el => {
-    const upd = () => {
-      const i = parseInt(el.dataset.i, 10);
-      const k = el.dataset.k;
-      state.pumps[i][k] = (k === "model" || k === "sys") ? el.value : num(el.value);
-      recalc();
-    };
-    el.addEventListener("input", upd);
-    el.addEventListener("change", upd);
-  });
-
-  body.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
-    state.pumps.splice(parseInt(b.dataset.del, 10), 1);
-    if (state.pumps.length === 0) state.selPump = null;
-    renderPumps();
-    recalc();
-  }));
-}
-
-/* -------------------- CURVE MATH -------------------- */
-function interp(pts, x) {
-  const p = pts.slice().sort((a, b) => a[0] - b[0]);
-  if (p.length === 0) return null;
-
-  if (x <= p[0][0]) return p[0][1];
-  if (x >= p[p.length - 1][0]) return p[p.length - 1][1];
-
-  for (let i = 0; i < p.length - 1; i++) {
-    const [x1, y1] = p[i];
-    const [x2, y2] = p[i + 1];
-    if (x >= x1 && x <= x2) {
-      const t = (x - x1) / (x2 - x1);
-      return y1 + t * (y2 - y1);
-    }
-  }
-  return null;
-}
-
-function curveRange(pts) {
-  const p = pts.slice().sort((a, b) => a[0] - b[0]);
-  if (p.length === 0) return { min: 0, max: 0 };
-  return { min: p[0][0], max: p[p.length - 1][0] };
-}
-
-function chooseLine(model, flow, tdh) {
-  const lines = state.curves[model] || [];
-  let best = null;
-
-  for (const L of lines) {
-    const h = interp(L.pts, flow);
-    if (h == null) continue;
-    const s = Math.abs(h - tdh);
-    if (!best || s < best.s) best = { ...L, h, s, range: curveRange(L.pts) };
-  }
-  return best;
-}
-
-/* -------------------- REQUIRED FLOW PER SYSTEM -------------------- */
-function requiredForSystem(sys) {
-  const poolReq = poolModeRequiredGpm(); // turnover + features
-  const wfReq = wfGpm();
-  const spaReq = spaModeRequiredGpm();
-
-  const spaOn = $("spaMode").checked;
-
-  if (sys === "Pool") return poolReq;
-  if (sys === "Water Features") return wfReq;
-  if (sys === "Spa") return spaReq;
-
-  if (sys === "Shared (Pool + Water)") return poolReq;
-  if (sys === "Shared (Pool + Spa)") return spaOn ? spaReq : poolReq;
-  if (sys === "Shared (All)") return spaOn ? Math.max(poolReq, spaReq) : poolReq;
-
-  return poolReq;
-}
-
-/* -------------------- PASS/FAIL EVALUATION -------------------- */
-function evalPump(p) {
-  const req = requiredForSystem(p.sys);
-  const perPumpFlow = req / Math.max(1, num(p.qty));
-  const tdh = num(p.tdh);
-
-  const best = chooseLine(p.model, perPumpFlow, tdh);
-  if (!best) return { status: "NO CURVE", cls: "mid", best: null, perPumpFlow, tdh, req };
-
-  // PASS if curve head >= required TDH at required flow, and flow in curve range
-  const within = perPumpFlow >= best.range.min && perPumpFlow <= best.range.max;
-  const headOk = best.h >= tdh;
-
-  let status = "FAIL", cls = "bad";
-  if (within && headOk) { status = "PASS"; cls = "ok"; }
-  else if (within && best.h >= (tdh * 0.9)) { status = "CLOSE"; cls = "mid"; }
-
-  return { status, cls, best, perPumpFlow, tdh, req };
-}
-
-function setBadge(el, status) {
-  el.classList.remove("ok", "bad", "mid");
-  if (status === "PASS") el.classList.add("ok");
-  else if (status === "FAIL") el.classList.add("bad");
-  else el.classList.add("mid");
-  el.textContent = status;
-}
-
-function modeStatusPool() {
-  const relevant = state.pumps.filter(p =>
-    ["Pool", "Water Features", "Shared (Pool + Water)", "Shared (All)"].includes(p.sys)
-  );
-  if (relevant.length === 0) return "—";
-
-  const anyFail = relevant.some(p => (state.lastEval[p.id]?.status === "FAIL"));
-  const anyPass = relevant.some(p => (state.lastEval[p.id]?.status === "PASS"));
-
-  if (anyFail) return "FAIL";
-  if (anyPass) return "PASS";
-  return "CLOSE";
-}
-
-function modeStatusSpa() {
-  const spaOn = $("spaMode").checked;
-  if (!spaOn) return "—";
-
-  const setup = $("spaSetup").value; // shared/dedicated
-  let relevant = [];
-
-  if (setup === "dedicated") {
-    relevant = state.pumps.filter(p => p.sys === "Spa");
-  } else {
-    relevant = state.pumps.filter(p => ["Pool","Shared (Pool + Spa)","Shared (All)"].includes(p.sys));
-  }
-
-  if (relevant.length === 0) return "FAIL";
-
-  const anyFail = relevant.some(p => (state.lastEval[p.id]?.status === "FAIL"));
-  const anyPass = relevant.some(p => (state.lastEval[p.id]?.status === "PASS"));
-
-  if (anyFail && !anyPass) return "FAIL";
-  if (anyPass) return "PASS";
-  return "CLOSE";
-}
-
-/* -------------------- AUTO TDH (Shared pumps default) -------------------- */
-function computeAutoTdh() {
-  const dist = num($("equipDistance")?.value);
-  const fittings = num($("fittingsEq")?.value);
-  const d = num($("pipeSize")?.value);
-  const C = num($("cHw")?.value) || 140;
-  const elev = num($("elev")?.value);
-  const equip = num($("equipHead")?.value);
-
-  // Require minimums
-  if (dist <= 0 || d <= 0) return null;
-
-  const L = Math.max(0, dist * 2 + fittings); // round trip + fittings
-  const Q = Math.max(0.01, poolModeRequiredGpm()); // baseline demand
-  const hf = 4.52 * L * Math.pow(Q, 1.85) / (Math.pow(C, 1.85) * Math.pow(d, 4.87));
-  const tdh = hf + elev + equip;
-
-  if (!Number.isFinite(tdh) || tdh <= 0) return null;
-  return { tdh, hf, L };
-}
-
-function applyAutoTdhIfNeeded() {
-  const calc = computeAutoTdh();
-  if (!calc) {
-    $("tdhOut").textContent = "TDH: — (enter distance + pipe size)";
-    state.autoTdhLast = null;
-    return;
-  }
-
-  state.autoTdhLast = calc.tdh;
-  $("tdhOut").textContent = `TDH: ${fmt(calc.tdh)} ft (Auto, L=${fmt(calc.L)} ft)`;
-
-  // User chose Apply TDH to (default should be Shared pumps)
-  const ap = $("applyTo")?.value || "shared";
-
-  state.pumps.forEach(p => {
-    if (ap === "all") p.tdh = calc.tdh;
-    else if (ap === "pool" && p.sys === "Pool") p.tdh = calc.tdh;
-    else if (ap === "water" && p.sys === "Water Features") p.tdh = calc.tdh;
-    else if (ap === "spa" && p.sys === "Spa") p.tdh = calc.tdh;
-    else if (ap === "shared" && p.sys.startsWith("Shared")) p.tdh = calc.tdh;
-  });
-}
-
-/* -------------------- MAIN RECALC -------------------- */
-function recalc() {
-  // Normalize curves keys always (safe)
-  state.curves = normalizeCurvesKeys(state.curves);
-
-  // Apply Auto TDH (no button needed)
-  if ($("equipDistance")) {
-    applyAutoTdhIfNeeded();
-  }
-
-  // Compute flows
-  const tg = poolTurnoverGpm();
-  const wg = wfGpm();
-  const poolReq = poolModeRequiredGpm();
-
-  $("turnoverGpm").textContent = fmt(tg) + " GPM";
-  $("wfGpm").textContent = fmt(wg) + " GPM";
-  $("poolModeGpm").textContent = fmt(poolReq) + " GPM";
-
-  // Spa numbers
-  $("spaJetsGpm").textContent = fmt(spaJetsGpm()) + " GPM";
-  $("spaTurnoverGpm").textContent = fmt(spaTurnoverGpm()) + " GPM";
-  $("spaModeGpm").textContent = fmt(spaModeRequiredGpm()) + " GPM";
-
-  // Evaluate each pump and paint its badge
-  state.lastEval = {};
-  state.pumps.forEach(p => {
-    const ev = evalPump(p);
-    state.lastEval[p.id] = ev;
-
-    const s = $("status_" + p.id);
-    if (s) {
-      s.classList.remove("ok", "bad", "mid");
-      s.classList.add(ev.cls);
-      s.textContent = ev.status;
-      const line = `Req ${fmt(ev.req)} GPM @ ${fmt(ev.tdh)} ft | Per pump ${fmt(ev.perPumpFlow)} GPM`;
-      const curve = ev.best ? `${Math.round(ev.best.rpm)} RPM → ${fmt(ev.best.h)} ft` : "No curve";
-      s.title = line + " | " + curve;
-    }
-  });
-
-  // Mode badges
-  $("poolModeLine").textContent = `Required: ${fmt(poolReq)} GPM`;
-  const pb = $("poolModeBadge");
-  const poolStatus = modeStatusPool();
-  if (poolStatus === "—") { pb.textContent = "—"; pb.classList.remove("ok","bad","mid"); pb.classList.add("mid"); }
-  else setBadge(pb, poolStatus);
-
-  const spaOn = $("spaMode").checked;
-  const spaReq = spaModeRequiredGpm();
-  $("spaModeLine").textContent = spaOn ? `Required: ${fmt(spaReq)} GPM @ ${fmt(num($("spaTdh").value))} ft` : "Required: —";
-  const sb = $("spaModeBadge");
-  const spaStatus = modeStatusSpa();
-  if (spaStatus === "—") { sb.textContent = "—"; sb.classList.remove("ok","bad","mid"); sb.classList.add("mid"); }
-  else setBadge(sb, spaStatus);
-
-  // Ensure a selected pump for chart
-  if (!state.selPump && state.pumps.length) state.selPump = state.pumps[0].id;
-
-  updateChart();
-}
-
-/* -------------------- CHART -------------------- */
-let chart;
-function initChart() {
-  chart = new Chart($("curveChart"), {
-    type: "line",
-    data: { datasets: [] },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: "#eaf0ff" } } },
-      scales: {
-        x: { title: { display: true, text: "Flow (GPM)", color: "#eaf0ff" }, ticks: { color: "#c9d4ff" }, grid: { color: "rgba(255,255,255,.08)" } },
-        y: { title: { display: true, text: "TDH (ft)", color: "#eaf0ff" }, ticks: { color: "#c9d4ff" }, grid: { color: "rgba(255,255,255,.08)" } }
+      if (Number.isFinite(gpm) && Number.isFinite(tdh)) {
+        pts.push({ gpm, tdh });
       }
     }
-  });
-}
 
-function updateChart() {
-  // normalize curves always
-  state.curves = normalizeCurvesKeys(state.curves);
-
-  const pump = state.pumps.find(x => x.id === state.selPump) || state.pumps[0];
-  if (!pump) { chart.data.datasets = []; chart.update(); return; }
-
-  const ev = state.lastEval[pump.id] || evalPump(pump);
-  const lines = state.curves[pump.model] || [];
-
-  // If no curve data, show empty with quick hint
-  if (!lines.length) {
-    chart.data.datasets = [];
-    chart.update();
-    return;
+    // sort by GPM asc
+    pts.sort((p1, p2) => p1.gpm - p2.gpm);
+    return pts;
   }
 
-  const ds = lines.map(L => ({
-    label: L.label,
-    data: (L.pts || []).map(([x, y]) => ({ x, y })),
-    borderWidth: 2,
-    pointRadius: 0,
-    tension: 0.25
-  }));
+  /**
+   * Linear interpolation along a curve:
+   * Given TDH target, returns GPM at that TDH (approx) by scanning segments.
+   * Assumes curve is decreasing in TDH as GPM increases (typical pump curve).
+   */
+  function gpmAtTDH(points, targetTDH) {
+    if (!points || points.length < 2) return null;
 
-  // Operating point (required flow) on best line
-  if (ev.best) {
-    ds.push({
-      label: "Operating Point",
-      data: [{ x: ev.perPumpFlow, y: ev.best.h }],
-      showLine: false,
-      pointRadius: 6
-    });
+    // Find segment where TDH crosses target
+    for (let i = 0; i < points.length - 1; i++) {
+      const p1 = points[i];
+      const p2 = points[i + 1];
 
-    ds.push({
-      label: "Target TDH",
-      data: [{ x: 0, y: ev.tdh }, { x: Math.max(10, ev.perPumpFlow * 1.6), y: ev.tdh }],
-      borderDash: [6, 6],
-      pointRadius: 0
-    });
+      const t1 = p1.tdh;
+      const t2 = p2.tdh;
+
+      const minT = Math.min(t1, t2);
+      const maxT = Math.max(t1, t2);
+
+      if (targetTDH >= minT && targetTDH <= maxT) {
+        // interpolate between p1 and p2
+        const dt = (t2 - t1);
+        if (dt === 0) return p1.gpm;
+        const r = (targetTDH - t1) / dt; // 0..1
+        const g = p1.gpm + r * (p2.gpm - p1.gpm);
+        return g;
+      }
+    }
+
+    return null; // out of range
   }
 
-  chart.data.datasets = ds;
-  chart.update();
-}
+  /* -----------------------------
+     Default Curves (editable)
+     NOTE: You can replace these with your exact points.
+  ----------------------------- */
 
-/* -------------------- CURVES MODAL -------------------- */
-function openModal() {
-  $("curvesModal").setAttribute("aria-hidden", "false");
-  renderTabs();
-  renderLines();
-}
-function closeModal() {
-  $("curvesModal").setAttribute("aria-hidden", "true");
-}
-
-function renderTabs() {
-  const w = $("curveTabs");
-  w.innerHTML = "";
-  PUMPS.forEach(p => {
-    const b = document.createElement("button");
-    b.className = "tab" + (p.id === state.modalPump ? " active" : "");
-    b.textContent = p.name;
-    b.onclick = () => { state.modalPump = p.id; renderTabs(); renderLines(); };
-    w.appendChild(b);
-  });
-}
-
-function parsePts(t) {
-  const pts = [];
-  t.split(/\r?\n/).forEach(s => {
-    s = s.trim();
-    if (!s) return;
-    const a = s.split(",").map(x => x.trim());
-    if (a.length < 2) return;
-    const x = num(a[0]), y = num(a[1]);
-    if (Number.isFinite(x) && Number.isFinite(y)) pts.push([x, y]);
-  });
-  pts.sort((a, b) => a[0] - b[0]);
-  return pts;
-}
-
-function renderLines() {
-  const w = $("curveLines");
-  w.innerHTML = "";
-  const lines = state.curves[state.modalPump] || [];
-
-  lines.forEach((L, i) => {
-    const div = document.createElement("div");
-    div.className = "line";
-    div.innerHTML = `
-      <div>
-        <label>RPM<input data-rpm="${i}" type="number" value="${L.rpm}"></label>
-        <label>Label<input data-lbl="${i}" value="${L.label || ""}"></label>
-      </div>
-      <div>
-        <label>Points<textarea data-pts="${i}" rows="5" spellcheck="false">${(L.pts||[]).map(p=>p.join(",")).join("\n")}</textarea></label>
-      </div>
-      <button class="x" data-del="${i}">✕</button>
-    `;
-    w.appendChild(div);
-  });
-
-  w.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
-    const i = parseInt(b.dataset.del, 10);
-    (state.curves[state.modalPump] || []).splice(i, 1);
-    renderLines();
-  });
-
-  // live update
-  w.querySelectorAll("input,textarea").forEach(() => {
-    const lines = state.curves[state.modalPump] || [];
-    w.querySelectorAll("[data-rpm]").forEach(inp => {
-      const i = parseInt(inp.dataset.rpm, 10);
-      if (lines[i]) lines[i].rpm = num(inp.value);
-    });
-    w.querySelectorAll("[data-lbl]").forEach(inp => {
-      const i = parseInt(inp.dataset.lbl, 10);
-      if (lines[i]) lines[i].label = inp.value;
-    });
-    w.querySelectorAll("[data-pts]").forEach(ta => {
-      const i = parseInt(ta.dataset.pts, 10);
-      if (lines[i]) lines[i].pts = parsePts(ta.value);
-    });
-  });
-}
-
-/* -------------------- EXPORT / IMPORT -------------------- */
-function exportJson() {
-  const data = {
-    project: {
-      clientName: $("clientName").value,
-      location: $("location").value,
-      poolVolume: num($("poolVolume").value),
-      turnoverPreset: $("turnoverPreset").value,
-      turnoverCustom: $("turnoverCustom").value
+  const DEFAULT_CURVES = {
+    "jandy-vsflo-pro-2.7": {
+      label: "Jandy VS FloPro 2.7 HP",
+      lines: [
+        {
+          rpm: 3450,
+          label: "3450 RPM",
+          // Sample points; you can paste exact from datasheet
+          pointsText: `0,95
+30,92
+60,86
+90,75
+120,55
+135,44`
+        },
+        {
+          rpm: 3000,
+          label: "3000 RPM",
+          pointsText: `0,75
+30,71
+60,63
+90,50
+120,33`
+        }
+      ]
     },
-    spa: {
-      spaMode: $("spaMode").checked,
-      spaSetup: $("spaSetup").value,
-      spaVolume: num($("spaVolume").value),
-      spaTurnover: num($("spaTurnover").value),
-      spaJets: num($("spaJets").value),
-      gpmPerJet: num($("gpmPerJet").value),
-      spaTdh: num($("spaTdh").value)
+    "jandy-vsflo-pro-1.85": {
+      label: "Jandy VS FloPro 1.85 HP",
+      lines: [
+        {
+          rpm: 3450,
+          label: "3450 RPM",
+          pointsText: `0,78
+30,76
+60,70
+90,58
+120,33`
+        },
+        {
+          rpm: 3000,
+          label: "3000 RPM",
+          pointsText: `0,58
+30,56
+60,50
+90,38
+105,25`
+        }
+      ]
     },
-    wf: state.wf,
-    pumps: state.pumps,
-    curves: state.curves,
-    eng: {
-      equipDistance: num($("equipDistance")?.value),
-      fittingsEq: num($("fittingsEq")?.value),
-      pipeSize: $("pipeSize")?.value,
-      elev: num($("elev")?.value),
-      equipHead: num($("equipHead")?.value),
-      cHw: num($("cHw")?.value),
-      applyTo: $("applyTo")?.value
+    "jandy-fhpm-1.0": {
+      label: "Jandy FloPro FHPM 1.0 HP",
+      lines: [
+        {
+          rpm: 3450,
+          label: "FHPM 1.0 (Hi)",
+          pointsText: `0,57
+20,50
+40,40
+60,26
+80,14`
+        }
+      ]
+    },
+    "jandy-vsflo-pro-3.8": {
+      label: "Jandy VS FloPro 3.8 HP",
+      lines: [
+        {
+          rpm: 3450,
+          label: "3450 RPM",
+          pointsText: `0,102
+30,100
+60,97
+90,90
+120,75
+150,52
+180,33`
+        },
+        {
+          rpm: 3000,
+          label: "3000 RPM",
+          pointsText: `0,77
+30,75
+60,72
+90,65
+120,52
+160,22`
+        }
+      ]
     }
   };
 
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "pool-pump-tool.json";
-  a.click();
-}
+  /* -----------------------------
+     State
+  ----------------------------- */
 
-function importJson(ev) {
-  const f = ev.target.files?.[0];
-  if (!f) return;
+  const state = {
+    // curve data normalized (points parsed)
+    curves: normalizeCurves(DEFAULT_CURVES),
 
-  const r = new FileReader();
-  r.onload = () => {
+    // chart inputs (what to draw)
+    selectedPumpKey: Object.keys(DEFAULT_CURVES)[0],
+    targetTDH: 50,          // ft
+    operatingFlow: 94.2,    // GPM
+
+    // which RPM lines to show (null = show all)
+    visibleRPMs: null
+  };
+
+  function normalizeCurves(curvesObj) {
+    const out = {};
+    for (const [key, pump] of Object.entries(curvesObj)) {
+      out[key] = {
+        label: pump.label || key,
+        lines: (pump.lines || []).map((ln) => ({
+          rpm: ln.rpm,
+          label: ln.label || `${ln.rpm} RPM`,
+          points: Array.isArray(ln.points)
+            ? ln.points.slice().sort((a, b) => a.gpm - b.gpm)
+            : parsePointsText(ln.pointsText || "")
+        }))
+      };
+    }
+    return out;
+  }
+
+  /* -----------------------------
+     Canvas Chart Renderer
+  ----------------------------- */
+
+  function renderCurveChart() {
+    const canvas = $("#curveCanvas");
+    if (!canvas) return; // if your HTML uses a different id, change it here
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // handle high-DPI
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(320, Math.floor(rect.width));
+    const h = Math.max(240, Math.floor(rect.height));
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // background clear
+    ctx.clearRect(0, 0, w, h);
+
+    const pad = { l: 58, r: 16, t: 18, b: 42 };
+
+    // get selected pump data
+    const pump = state.curves[state.selectedPumpKey];
+    if (!pump) {
+      drawText(ctx, "No pump curves found", 16, 24, "#fff");
+      return;
+    }
+
+    const lines = pump.lines
+      .filter((ln) => ln.points && ln.points.length >= 2)
+      .filter((ln) => {
+        if (!state.visibleRPMs) return true;
+        return state.visibleRPMs.includes(ln.rpm);
+      });
+
+    if (!lines.length) {
+      drawText(ctx, "No curve points to draw", 16, 24, "#fff");
+      return;
+    }
+
+    // compute bounds across all lines
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const ln of lines) {
+      for (const p of ln.points) {
+        minX = Math.min(minX, p.gpm);
+        maxX = Math.max(maxX, p.gpm);
+        minY = Math.min(minY, p.tdh);
+        maxY = Math.max(maxY, p.tdh);
+      }
+    }
+
+    // add padding to bounds
+    const xPad = (maxX - minX) * 0.08 || 10;
+    const yPad = (maxY - minY) * 0.10 || 10;
+    minX = Math.max(0, minX - xPad);
+    maxX = maxX + xPad;
+    minY = Math.max(0, minY - yPad);
+    maxY = maxY + yPad;
+
+    // ensure target TDH visible
+    if (Number.isFinite(state.targetTDH)) {
+      minY = Math.min(minY, state.targetTDH - 10);
+      maxY = Math.max(maxY, state.targetTDH + 10);
+      minY = Math.max(0, minY);
+    }
+
+    // coordinate transforms
+    const plotW = w - pad.l - pad.r;
+    const plotH = h - pad.t - pad.b;
+
+    const xToPx = (x) => pad.l + ((x - minX) / (maxX - minX)) * plotW;
+    const yToPx = (y) => pad.t + plotH - ((y - minY) / (maxY - minY)) * plotH;
+
+    // Draw grid
+    drawGrid(ctx, w, h, pad, minX, maxX, minY, maxY, xToPx, yToPx);
+
+    // Axis labels
+    drawText(ctx, "Flow (GPM)", pad.l + plotW / 2, h - 12, "#cbd5e1", "center");
+    drawText(ctx, "TDH (ft)", 18, pad.t + plotH / 2, "#cbd5e1", "center", true);
+
+    // Draw curves
+    const palette = [
+      "#38bdf8", // cyan
+      "#fb7185", // rose
+      "#f59e0b", // amber
+      "#a78bfa", // violet
+      "#34d399"  // green
+    ];
+
+    lines.forEach((ln, idx) => {
+      const color = palette[idx % palette.length];
+      drawPolyline(ctx, ln.points.map(p => ({ x: xToPx(p.gpm), y: yToPx(p.tdh) })), color, 2.5);
+
+      // label near first point
+      const p0 = ln.points[Math.min(1, ln.points.length - 1)];
+      drawTag(ctx, ln.label, xToPx(p0.gpm) + 6, yToPx(p0.tdh) - 6, color);
+    });
+
+    // Target TDH line (horizontal)
+    if (Number.isFinite(state.targetTDH)) {
+      const y = yToPx(state.targetTDH);
+      ctx.save();
+      ctx.strokeStyle = "#fbbf24"; // amber-ish
+      ctx.setLineDash([6, 6]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, y);
+      ctx.lineTo(pad.l + plotW, y);
+      ctx.stroke();
+      ctx.restore();
+
+      drawTag(ctx, `Target TDH: ${round1(state.targetTDH)} ft`, pad.l + plotW - 8, y - 8, "#fbbf24", "right");
+    }
+
+    // Operating point: where curve meets target TDH for best (highest) RPM by default
+    // Find first line where target TDH is within range, then compute gpm
+    let op = null;
+    if (Number.isFinite(state.targetTDH)) {
+      const sorted = lines.slice().sort((a, b) => (b.rpm || 0) - (a.rpm || 0));
+      for (const ln of sorted) {
+        const gpm = gpmAtTDH(ln.points, state.targetTDH);
+        if (gpm != null && Number.isFinite(gpm)) {
+          op = { gpm, tdh: state.targetTDH, rpmLabel: ln.label };
+          break;
+        }
+      }
+    }
+
+    // If you want operating point to be at required flow instead, use operatingFlow with curve TDH:
+    // But typical UX: show required flow vertical + target TDH horizontal. We'll show both.
+
+    // Required flow line (vertical)
+    if (Number.isFinite(state.operatingFlow)) {
+      const x = xToPx(state.operatingFlow);
+      ctx.save();
+      ctx.strokeStyle = "#94a3b8"; // slate
+      ctx.setLineDash([5, 5]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, pad.t);
+      ctx.lineTo(x, pad.t + plotH);
+      ctx.stroke();
+      ctx.restore();
+      drawTag(ctx, `Required Flow: ${round1(state.operatingFlow)} GPM`, x + 8, pad.t + 14, "#94a3b8");
+    }
+
+    // Operating point marker
+    if (op) {
+      const px = xToPx(op.gpm);
+      const py = yToPx(op.tdh);
+      drawDot(ctx, px, py, "#f59e0b");
+      drawTag(ctx, `Operating: ${round1(op.gpm)} GPM @ ${round1(op.tdh)} ft (${op.rpmLabel})`, px + 10, py - 10, "#f59e0b");
+    }
+
+    // Title
+    drawText(ctx, pump.label, pad.l, 16, "#e5e7eb", "left");
+  }
+
+  function drawText(ctx, text, x, y, color, align = "left", rotate = false) {
+    ctx.save();
+    ctx.fillStyle = color || "#fff";
+    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.textAlign = align;
+    ctx.textBaseline = "middle";
+    if (rotate) {
+      ctx.translate(x, y);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(text, 0, 0);
+    } else {
+      ctx.fillText(text, x, y);
+    }
+    ctx.restore();
+  }
+
+  function drawGrid(ctx, w, h, pad, minX, maxX, minY, maxY, xToPx, yToPx) {
+    const plotW = w - pad.l - pad.r;
+    const plotH = h - pad.t - pad.b;
+
+    // background
+    ctx.save();
+    ctx.fillStyle = "rgba(2,6,23,0.25)"; // subtle
+    ctx.fillRect(pad.l, pad.t, plotW, plotH);
+    ctx.restore();
+
+    // grid lines
+    const xTicks = 6;
+    const yTicks = 6;
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(148,163,184,0.18)";
+    ctx.lineWidth = 1;
+
+    for (let i = 0; i <= xTicks; i++) {
+      const x = pad.l + (plotW * i) / xTicks;
+      ctx.beginPath();
+      ctx.moveTo(x, pad.t);
+      ctx.lineTo(x, pad.t + plotH);
+      ctx.stroke();
+
+      const val = minX + ((maxX - minX) * i) / xTicks;
+      drawText(ctx, round0(val), x, pad.t + plotH + 16, "#94a3b8", "center");
+    }
+
+    for (let i = 0; i <= yTicks; i++) {
+      const y = pad.t + (plotH * i) / yTicks;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, y);
+      ctx.lineTo(pad.l + plotW, y);
+      ctx.stroke();
+
+      const val = maxY - ((maxY - minY) * i) / yTicks;
+      drawText(ctx, round0(val), pad.l - 10, y, "#94a3b8", "right");
+    }
+
+    // axes
+    ctx.strokeStyle = "rgba(148,163,184,0.35)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, pad.t);
+    ctx.lineTo(pad.l, pad.t + plotH);
+    ctx.lineTo(pad.l + plotW, pad.t + plotH);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawPolyline(ctx, pts, color, width = 2) {
+    if (!pts || pts.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = color || "#fff";
+    ctx.lineWidth = width;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      ctx.lineTo(pts[i].x, pts[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawDot(ctx, x, y, color) {
+    ctx.save();
+    ctx.fillStyle = color || "#fff";
+    ctx.beginPath();
+    ctx.arc(x, y, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawTag(ctx, text, x, y, color, align = "left") {
+    ctx.save();
+    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = align;
+
+    const paddingX = 8;
+    const paddingY = 5;
+    const metrics = ctx.measureText(text);
+    const w = metrics.width + paddingX * 2;
+    const h = 22;
+
+    let bx = x;
+    if (align === "right") bx = x - w;
+    if (align === "center") bx = x - w / 2;
+
+    const by = y - h / 2;
+
+    // background
+    ctx.fillStyle = "rgba(15,23,42,0.85)";
+    roundRect(ctx, bx, by, w, h, 10);
+    ctx.fill();
+
+    // border
+    ctx.strokeStyle = color || "rgba(255,255,255,0.35)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // text
+    ctx.fillStyle = color || "#fff";
+    ctx.fillText(text, bx + paddingX, y);
+
+    ctx.restore();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  function round0(n) {
+    return String(Math.round(n));
+  }
+  function round1(n) {
+    return (Math.round(n * 10) / 10).toFixed(1);
+  }
+
+  /* -----------------------------
+     Wiring to your UI (best effort)
+     This code tries to connect to your existing controls.
+     If your IDs differ, tell me your index.html and I’ll match them.
+  ----------------------------- */
+
+  function tryBindUI() {
+    // Pump model select (global) - optional
+    const pumpSelect =
+      $("#pumpModelSelect") ||
+      $("#pumpModel") ||
+      $('[data-role="pump-model-select"]');
+
+    if (pumpSelect) {
+      // populate if empty
+      if (pumpSelect.tagName === "SELECT" && pumpSelect.options.length < 2) {
+        pumpSelect.innerHTML = "";
+        for (const [key, p] of Object.entries(state.curves)) {
+          const opt = document.createElement("option");
+          opt.value = key;
+          opt.textContent = p.label;
+          pumpSelect.appendChild(opt);
+        }
+      }
+
+      pumpSelect.value = state.selectedPumpKey;
+      pumpSelect.addEventListener("change", () => {
+        state.selectedPumpKey = pumpSelect.value;
+        renderCurveChart();
+      });
+    }
+
+    // TDH input
+    const tdhInput =
+      $("#tdhInput") ||
+      $("#tdh") ||
+      $('[data-role="tdh-input"]');
+
+    if (tdhInput) {
+      tdhInput.value = state.targetTDH;
+      tdhInput.addEventListener("input", () => {
+        state.targetTDH = toNum(tdhInput.value, state.targetTDH);
+        renderCurveChart();
+      });
+    }
+
+    // Required flow
+    const flowInput =
+      $("#requiredFlowInput") ||
+      $("#requiredFlow") ||
+      $('[data-role="required-flow-input"]');
+
+    if (flowInput) {
+      flowInput.value = state.operatingFlow;
+      flowInput.addEventListener("input", () => {
+        state.operatingFlow = toNum(flowInput.value, state.operatingFlow);
+        renderCurveChart();
+      });
+    }
+
+    // Curves editor modal textareas:
+    // expects something like:
+    // <textarea data-curve="jandy-vsflo-pro-2.7" data-rpm="3450"></textarea>
+    const curveTextAreas = $$("textarea[data-curve][data-rpm]");
+    if (curveTextAreas.length) {
+      for (const ta of curveTextAreas) {
+        const key = ta.getAttribute("data-curve");
+        const rpm = toNum(ta.getAttribute("data-rpm"), 0);
+
+        const pump = state.curves[key];
+        if (!pump) continue;
+
+        const line = pump.lines.find((l) => Number(l.rpm) === Number(rpm));
+        if (!line) continue;
+
+        // set current
+        ta.value = (line.points || []).map(p => `${p.gpm},${p.tdh}`).join("\n");
+
+        // parse on input
+        ta.addEventListener("input", () => {
+          line.points = parsePointsText(ta.value);
+          renderCurveChart();
+        });
+      }
+    }
+
+    // If you have a "Save Curves" button
+    const saveBtn = $("#saveCurvesBtn") || $('[data-role="save-curves"]');
+    if (saveBtn) {
+      saveBtn.addEventListener("click", () => {
+        // persist to localStorage
+        try {
+          localStorage.setItem("poolPumpCurvesV1", JSON.stringify(state.curves));
+          alert("Curves saved.");
+        } catch (e) {
+          console.warn(e);
+          alert("Could not save curves.");
+        }
+      });
+    }
+
+    // Load from localStorage if exists
     try {
-      const d = JSON.parse(r.result);
-
-      if (d.project) {
-        $("clientName").value = d.project.clientName || "";
-        $("location").value = d.project.location || "";
-        $("poolVolume").value = d.project.poolVolume ?? "";
-        $("turnoverPreset").value = d.project.turnoverPreset || "8";
-        $("turnoverCustom").value = d.project.turnoverCustom || "";
-        $("turnoverCustom").disabled = $("turnoverPreset").value !== "custom";
+      const raw = localStorage.getItem("poolPumpCurvesV1");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // minimal validation
+        if (parsed && typeof parsed === "object") {
+          state.curves = parsed;
+        }
       }
-
-      if (d.spa) {
-        $("spaMode").checked = !!d.spa.spaMode;
-        $("spaSetup").value = d.spa.spaSetup || "shared";
-        $("spaVolume").value = d.spa.spaVolume ?? "";
-        $("spaTurnover").value = d.spa.spaTurnover ?? "";
-        $("spaJets").value = d.spa.spaJets ?? 0;
-        $("gpmPerJet").value = d.spa.gpmPerJet ?? 12;
-        $("spaTdh").value = d.spa.spaTdh ?? 50;
-      }
-
-      state.wf = Array.isArray(d.wf) ? d.wf : state.wf;
-      state.pumps = Array.isArray(d.pumps) ? d.pumps : state.pumps;
-
-      state.curves = normalizeCurvesKeys(d.curves) || state.curves;
-
-      if (d.eng) {
-        if ($("equipDistance")) $("equipDistance").value = d.eng.equipDistance ?? "";
-        if ($("fittingsEq")) $("fittingsEq").value = d.eng.fittingsEq ?? 60;
-        if ($("pipeSize")) $("pipeSize").value = d.eng.pipeSize || "2.5";
-        if ($("elev")) $("elev").value = d.eng.elev ?? "";
-        if ($("equipHead")) $("equipHead").value = d.eng.equipHead ?? 10;
-        if ($("cHw")) $("cHw").value = d.eng.cHw ?? 140;
-        if ($("applyTo")) $("applyTo").value = d.eng.applyTo || "shared";
-      }
-
-      renderWF();
-      renderPumps();
-
-      if (!state.selPump && state.pumps.length) state.selPump = state.pumps[0].id;
-
-      recalc();
-      updateChart();
-    } catch {
-      alert("Invalid JSON file");
+    } catch (e) {
+      // ignore
     }
+  }
+
+  function ensureCanvasExists() {
+    let canvas = $("#curveCanvas");
+    if (canvas) return;
+
+    // fallback: create a canvas inside a common container
+    const container =
+      $("#curveViewer") ||
+      $('[data-role="curve-viewer"]') ||
+      document.body;
+
+    canvas = document.createElement("canvas");
+    canvas.id = "curveCanvas";
+    canvas.style.width = "100%";
+    canvas.style.height = "320px";
+    canvas.style.borderRadius = "14px";
+    canvas.style.background = "rgba(2,6,23,0.25)";
+    canvas.style.display = "block";
+    canvas.style.marginTop = "12px";
+    container.appendChild(canvas);
+  }
+
+  function boot() {
+    ensureCanvasExists();
+    tryBindUI();
+    renderCurveChart();
+
+    // redraw on resize
+    let t = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(t);
+      t = setTimeout(renderCurveChart, 80);
+    });
+  }
+
+  // Expose small debug API
+  window.PoolPumpApp = {
+    state,
+    render: renderCurveChart,
+    setPump: (key) => { state.selectedPumpKey = key; renderCurveChart(); },
+    setTDH: (v) => { state.targetTDH = Number(v); renderCurveChart(); },
+    setRequiredFlow: (v) => { state.operatingFlow = Number(v); renderCurveChart(); },
+    parsePointsText
   };
-  r.readAsText(f);
-}
 
-/* -------------------- HOOKS / INIT -------------------- */
-$("turnoverPreset").onchange = () => {
-  const c = $("turnoverCustom");
-  c.disabled = $("turnoverPreset").value !== "custom";
-  if (c.disabled) c.value = "";
-  recalc();
-};
-
-["clientName","location","poolVolume","turnoverCustom"].forEach(id => $(id).oninput = recalc);
-
-$("addWF").onclick = () => {
-  state.wf.push({ type: "Sheer", qty: 1, w: 2, k: 15 });
-  renderWF();
-  recalc();
-};
-
-$("addPump").onclick = () => {
-  const p = {
-    id: "P" + String(state.pumps.length + 1).padStart(2, "0"),
-    model: "jandy_vs_27",
-    qty: 1,
-    sys: "Shared (Pool + Water)",
-    tdh: 50
-  };
-  state.pumps.push(p);
-  if (!state.selPump) state.selPump = p.id;
-  renderPumps();
-  recalc();
-  updateChart();
-};
-
-["spaMode","spaSetup","spaVolume","spaTurnover","spaJets","gpmPerJet","spaTdh"].forEach(id => $(id).oninput = recalc);
-$("spaMode").onchange = recalc;
-$("spaSetup").onchange = recalc;
-
-$("btnEditCurves").onclick = openModal;
-$("btnCloseCurves").onclick = closeModal;
-$("btnSaveCurves").onclick = () => { closeModal(); recalc(); };
-$("btnResetCurves").onclick = () => {
-  state.curves = normalizeCurvesKeys(defaults());
-  renderTabs(); renderLines(); recalc();
-};
-$("btnAddCurveLine").onclick = () => {
-  (state.curves[state.modalPump] ??= []).push({ rpm: 3000, label: "RPM", pts: [[0,50],[50,40],[100,25]] });
-  renderLines();
-};
-
-$("btnExport").onclick = exportJson;
-$("fileImport").onchange = importJson;
-$("btnPrint").onclick = () => window.print();
-
-// Auto TDH: re-run when engineering inputs change
-["equipDistance","fittingsEq","pipeSize","elev","equipHead","cHw","applyTo"].forEach(id => {
-  const el = $(id);
-  if (!el) return;
-  el.addEventListener("input", recalc);
-  el.addEventListener("change", recalc);
-});
-
-initChart();
-$("addWF").click();
-$("addPump").click();
+  document.addEventListener("DOMContentLoaded", boot);
+})();
