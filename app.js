@@ -13,11 +13,12 @@ const state = {
   curves: defaults(),
   selPump: null,
   modalPump: "jandy_vs_27",
-  lastEval: {} // store results per pump id
+  lastEval: {},
+  autoTdhLast: null
 };
 
 function defaults() {
-  // Starter placeholder points (EDIT via "Edit Curves" to match manufacturer charts)
+  // Placeholder curves (Edit Curves to paste manufacturer points)
   return {
     jandy_vs_27: [
       { rpm: 3450, label: "3450 RPM", pts: [[0,95],[30,92],[60,86],[90,75],[120,55],[135,44]] },
@@ -41,12 +42,37 @@ function num(v) {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 }
-
 function fmt(v) {
   return (Math.round(v * 10) / 10).toFixed(1);
 }
 
-/* ---------- FLOWS ---------- */
+/* -------------------- CURVE KEY NORMALIZATION -------------------- */
+/**
+ * If curves were stored using long names as keys (e.g. "Jandy VS FloPro 2.7 HP"),
+ * convert them to pump IDs (e.g. "jandy_vs_27") so the app can find them.
+ */
+function normalizeCurvesKeys(curvesObj) {
+  if (!curvesObj || typeof curvesObj !== "object") return curvesObj;
+
+  const nameToId = {};
+  PUMPS.forEach(p => { nameToId[p.name] = p.id; });
+
+  const out = { ...curvesObj };
+
+  Object.keys(curvesObj).forEach(key => {
+    if (nameToId[key] && !out[nameToId[key]]) {
+      out[nameToId[key]] = curvesObj[key];
+      delete out[key];
+    }
+  });
+
+  return out;
+}
+
+// Always keep curves normalized
+state.curves = normalizeCurvesKeys(state.curves);
+
+/* -------------------- FLOWS -------------------- */
 function poolTurnoverHours() {
   const p = $("turnoverPreset").value;
   if (p === "custom") {
@@ -67,7 +93,7 @@ function wfGpm() {
 }
 
 function poolModeRequiredGpm() {
-  // Spa OFF: Pool turnover + Water features
+  // Pool mode (Spa OFF): turnover + water features
   return poolTurnoverGpm() + wfGpm();
 }
 
@@ -83,11 +109,11 @@ function spaTurnoverGpm() {
 }
 
 function spaModeRequiredGpm() {
-  // Spa Only: max(jets, spa turnover) (turnover optional)
+  // Spa Only when Spa Mode ON
   return Math.max(spaJetsGpm(), spaTurnoverGpm());
 }
 
-/* ---------- WATER FEATURES UI ---------- */
+/* -------------------- WATER FEATURES UI -------------------- */
 function renderWF() {
   const body = $("wfBody");
   body.innerHTML = "";
@@ -141,7 +167,7 @@ function renderWF() {
   }));
 }
 
-/* ---------- PUMPS UI ---------- */
+/* -------------------- PUMPS UI -------------------- */
 function renderPumps() {
   const body = $("pumpBody");
   body.innerHTML = "";
@@ -201,7 +227,7 @@ function renderPumps() {
   }));
 }
 
-/* ---------- CURVE MATH ---------- */
+/* -------------------- CURVE MATH -------------------- */
 function interp(pts, x) {
   const p = pts.slice().sort((a, b) => a[0] - b[0]);
   if (p.length === 0) return null;
@@ -239,21 +265,18 @@ function chooseLine(model, flow, tdh) {
   return best;
 }
 
-/* ---------- REQUIRED FLOW PER SYSTEM ---------- */
+/* -------------------- REQUIRED FLOW PER SYSTEM -------------------- */
 function requiredForSystem(sys) {
-  const poolReq = poolModeRequiredGpm();
-  const wfReq = wfGpm();               // water only
-  const poolOnly = poolTurnoverGpm();  // turnover only
+  const poolReq = poolModeRequiredGpm(); // turnover + features
+  const wfReq = wfGpm();
   const spaReq = spaModeRequiredGpm();
 
   const spaOn = $("spaMode").checked;
 
-  // Standard definitions:
-  if (sys === "Pool") return poolReq; // pool mode includes turnover + features (client expectation)
+  if (sys === "Pool") return poolReq;
   if (sys === "Water Features") return wfReq;
   if (sys === "Spa") return spaReq;
 
-  // Shared options
   if (sys === "Shared (Pool + Water)") return poolReq;
   if (sys === "Shared (Pool + Spa)") return spaOn ? spaReq : poolReq;
   if (sys === "Shared (All)") return spaOn ? Math.max(poolReq, spaReq) : poolReq;
@@ -261,32 +284,26 @@ function requiredForSystem(sys) {
   return poolReq;
 }
 
-/* ---------- PASS/FAIL EVALUATION ---------- */
+/* -------------------- PASS/FAIL EVALUATION -------------------- */
 function evalPump(p) {
   const req = requiredForSystem(p.sys);
   const perPumpFlow = req / Math.max(1, num(p.qty));
   const tdh = num(p.tdh);
 
   const best = chooseLine(p.model, perPumpFlow, tdh);
-  if (!best) return { status: "NO CURVE", cls: "mid", line: null, perPumpFlow, tdh };
+  if (!best) return { status: "NO CURVE", cls: "mid", best: null, perPumpFlow, tdh, req };
 
-  // PASS logic:
-  // At required flow, curve head must be >= required TDH (pump can overcome it)
-  // Also flow should be within curve range (not beyond max)
+  // PASS if curve head >= required TDH at required flow, and flow in curve range
   const within = perPumpFlow >= best.range.min && perPumpFlow <= best.range.max;
   const headOk = best.h >= tdh;
 
   let status = "FAIL", cls = "bad";
-  let note = `Req ${fmt(req)} GPM @ ${fmt(tdh)} ft`;
-  let detail = `${Math.round(best.rpm)} RPM → ${fmt(best.h)} ft @ ${fmt(perPumpFlow)} GPM`;
-
   if (within && headOk) { status = "PASS"; cls = "ok"; }
   else if (within && best.h >= (tdh * 0.9)) { status = "CLOSE"; cls = "mid"; }
 
-  return { status, cls, note, detail, best, perPumpFlow, tdh };
+  return { status, cls, best, perPumpFlow, tdh, req };
 }
 
-/* ---------- BADGES FOR MODES ---------- */
 function setBadge(el, status) {
   el.classList.remove("ok", "bad", "mid");
   if (status === "PASS") el.classList.add("ok");
@@ -296,8 +313,6 @@ function setBadge(el, status) {
 }
 
 function modeStatusPool() {
-  // Pool mode: Spa OFF evaluation on pumps that are pool-related
-  // We consider PASS if all pumps assigned to Pool/Water/Shared(Pool+Water) are not FAIL.
   const relevant = state.pumps.filter(p =>
     ["Pool", "Water Features", "Shared (Pool + Water)", "Shared (All)"].includes(p.sys)
   );
@@ -321,8 +336,7 @@ function modeStatusSpa() {
   if (setup === "dedicated") {
     relevant = state.pumps.filter(p => p.sys === "Spa");
   } else {
-    // shared: we expect a Pool pump (or Shared Pool+Spa) to handle spa mode
-    relevant = state.pumps.filter(p => ["Pool", "Shared (Pool + Spa)", "Shared (All)"].includes(p.sys));
+    relevant = state.pumps.filter(p => ["Pool","Shared (Pool + Spa)","Shared (All)"].includes(p.sys));
   }
 
   if (relevant.length === 0) return "FAIL";
@@ -335,8 +349,60 @@ function modeStatusSpa() {
   return "CLOSE";
 }
 
-/* ---------- MAIN RECALC ---------- */
+/* -------------------- AUTO TDH (Shared pumps default) -------------------- */
+function computeAutoTdh() {
+  const dist = num($("equipDistance")?.value);
+  const fittings = num($("fittingsEq")?.value);
+  const d = num($("pipeSize")?.value);
+  const C = num($("cHw")?.value) || 140;
+  const elev = num($("elev")?.value);
+  const equip = num($("equipHead")?.value);
+
+  // Require minimums
+  if (dist <= 0 || d <= 0) return null;
+
+  const L = Math.max(0, dist * 2 + fittings); // round trip + fittings
+  const Q = Math.max(0.01, poolModeRequiredGpm()); // baseline demand
+  const hf = 4.52 * L * Math.pow(Q, 1.85) / (Math.pow(C, 1.85) * Math.pow(d, 4.87));
+  const tdh = hf + elev + equip;
+
+  if (!Number.isFinite(tdh) || tdh <= 0) return null;
+  return { tdh, hf, L };
+}
+
+function applyAutoTdhIfNeeded() {
+  const calc = computeAutoTdh();
+  if (!calc) {
+    $("tdhOut").textContent = "TDH: — (enter distance + pipe size)";
+    state.autoTdhLast = null;
+    return;
+  }
+
+  state.autoTdhLast = calc.tdh;
+  $("tdhOut").textContent = `TDH: ${fmt(calc.tdh)} ft (Auto, L=${fmt(calc.L)} ft)`;
+
+  // User chose Apply TDH to (default should be Shared pumps)
+  const ap = $("applyTo")?.value || "shared";
+
+  state.pumps.forEach(p => {
+    if (ap === "all") p.tdh = calc.tdh;
+    else if (ap === "pool" && p.sys === "Pool") p.tdh = calc.tdh;
+    else if (ap === "water" && p.sys === "Water Features") p.tdh = calc.tdh;
+    else if (ap === "spa" && p.sys === "Spa") p.tdh = calc.tdh;
+    else if (ap === "shared" && p.sys.startsWith("Shared")) p.tdh = calc.tdh;
+  });
+}
+
+/* -------------------- MAIN RECALC -------------------- */
 function recalc() {
+  // Normalize curves keys always (safe)
+  state.curves = normalizeCurvesKeys(state.curves);
+
+  // Apply Auto TDH (no button needed)
+  if ($("equipDistance")) {
+    applyAutoTdhIfNeeded();
+  }
+
   // Compute flows
   const tg = poolTurnoverGpm();
   const wg = wfGpm();
@@ -362,18 +428,19 @@ function recalc() {
       s.classList.remove("ok", "bad", "mid");
       s.classList.add(ev.cls);
       s.textContent = ev.status;
-      s.title = ev.note ? (ev.note + " | " + ev.detail) : ev.status;
+      const line = `Req ${fmt(ev.req)} GPM @ ${fmt(ev.tdh)} ft | Per pump ${fmt(ev.perPumpFlow)} GPM`;
+      const curve = ev.best ? `${Math.round(ev.best.rpm)} RPM → ${fmt(ev.best.h)} ft` : "No curve";
+      s.title = line + " | " + curve;
     }
   });
 
-  // Pool mode line + badge
+  // Mode badges
   $("poolModeLine").textContent = `Required: ${fmt(poolReq)} GPM`;
   const pb = $("poolModeBadge");
   const poolStatus = modeStatusPool();
   if (poolStatus === "—") { pb.textContent = "—"; pb.classList.remove("ok","bad","mid"); pb.classList.add("mid"); }
   else setBadge(pb, poolStatus);
 
-  // Spa mode line + badge
   const spaOn = $("spaMode").checked;
   const spaReq = spaModeRequiredGpm();
   $("spaModeLine").textContent = spaOn ? `Required: ${fmt(spaReq)} GPM @ ${fmt(num($("spaTdh").value))} ft` : "Required: —";
@@ -382,10 +449,13 @@ function recalc() {
   if (spaStatus === "—") { sb.textContent = "—"; sb.classList.remove("ok","bad","mid"); sb.classList.add("mid"); }
   else setBadge(sb, spaStatus);
 
+  // Ensure a selected pump for chart
+  if (!state.selPump && state.pumps.length) state.selPump = state.pumps[0].id;
+
   updateChart();
 }
 
-/* ---------- CHART ---------- */
+/* -------------------- CHART -------------------- */
 let chart;
 function initChart() {
   chart = new Chart($("curveChart"), {
@@ -404,24 +474,34 @@ function initChart() {
 }
 
 function updateChart() {
+  // normalize curves always
+  state.curves = normalizeCurvesKeys(state.curves);
+
   const pump = state.pumps.find(x => x.id === state.selPump) || state.pumps[0];
   if (!pump) { chart.data.datasets = []; chart.update(); return; }
 
   const ev = state.lastEval[pump.id] || evalPump(pump);
   const lines = state.curves[pump.model] || [];
 
+  // If no curve data, show empty with quick hint
+  if (!lines.length) {
+    chart.data.datasets = [];
+    chart.update();
+    return;
+  }
+
   const ds = lines.map(L => ({
     label: L.label,
-    data: L.pts.map(([x, y]) => ({ x, y })),
+    data: (L.pts || []).map(([x, y]) => ({ x, y })),
     borderWidth: 2,
     pointRadius: 0,
     tension: 0.25
   }));
 
-  // Operating point (at required flow) on the selected best line
+  // Operating point (required flow) on best line
   if (ev.best) {
     ds.push({
-      label: "Operating (Required Flow)",
+      label: "Operating Point",
       data: [{ x: ev.perPumpFlow, y: ev.best.h }],
       showLine: false,
       pointRadius: 6
@@ -439,45 +519,15 @@ function updateChart() {
   chart.update();
 }
 
-/* ---------- TDH ESTIMATOR (Distance-based) ---------- */
-function estimateTdh() {
-  const dist = num($("equipDistance").value);     // one-way
-  const fittings = num($("fittingsEq").value);    // extra
-  const L = Math.max(0, dist * 2 + fittings);     // round-trip + fittings allowance
-
-  const Q = Math.max(0.01, poolModeRequiredGpm()); // use pool-mode demand as baseline
-  const d = num($("pipeSize").value);
-  const C = num($("cHw").value) || 140;
-
-  const elev = num($("elev").value);
-  const equip = num($("equipHead").value);
-
-  // Hazen–Williams (approx) - same formula used earlier
-  const hf = 4.52 * L * Math.pow(Q, 1.85) / (Math.pow(C, 1.85) * Math.pow(d, 4.87));
-  const tdh = hf + elev + equip;
-
-  $("tdhOut").textContent = `TDH: ${fmt(tdh)} ft (friction ${fmt(hf)} ft, L=${fmt(L)} ft)`;
-
-  const ap = $("applyTo").value;
-  state.pumps.forEach(p => {
-    if (ap === "all") p.tdh = tdh;
-    else if (ap === "pool" && p.sys === "Pool") p.tdh = tdh;
-    else if (ap === "water" && p.sys === "Water Features") p.tdh = tdh;
-    else if (ap === "spa" && p.sys === "Spa") p.tdh = tdh;
-    else if (ap === "shared" && p.sys.startsWith("Shared")) p.tdh = tdh;
-  });
-
-  renderPumps();
-  recalc();
-}
-
-/* ---------- CURVES MODAL ---------- */
+/* -------------------- CURVES MODAL -------------------- */
 function openModal() {
   $("curvesModal").setAttribute("aria-hidden", "false");
   renderTabs();
   renderLines();
 }
-function closeModal() { $("curvesModal").setAttribute("aria-hidden", "true"); }
+function closeModal() {
+  $("curvesModal").setAttribute("aria-hidden", "true");
+}
 
 function renderTabs() {
   const w = $("curveTabs");
@@ -519,7 +569,7 @@ function renderLines() {
         <label>Label<input data-lbl="${i}" value="${L.label || ""}"></label>
       </div>
       <div>
-        <label>Points<textarea data-pts="${i}" rows="5" spellcheck="false">${L.pts.map(p=>p.join(",")).join("\n")}</textarea></label>
+        <label>Points<textarea data-pts="${i}" rows="5" spellcheck="false">${(L.pts||[]).map(p=>p.join(",")).join("\n")}</textarea></label>
       </div>
       <button class="x" data-del="${i}">✕</button>
     `;
@@ -532,6 +582,7 @@ function renderLines() {
     renderLines();
   });
 
+  // live update
   w.querySelectorAll("input,textarea").forEach(() => {
     const lines = state.curves[state.modalPump] || [];
     w.querySelectorAll("[data-rpm]").forEach(inp => {
@@ -549,7 +600,7 @@ function renderLines() {
   });
 }
 
-/* ---------- EXPORT / IMPORT ---------- */
+/* -------------------- EXPORT / IMPORT -------------------- */
 function exportJson() {
   const data = {
     project: {
@@ -572,13 +623,13 @@ function exportJson() {
     pumps: state.pumps,
     curves: state.curves,
     eng: {
-      equipDistance: num($("equipDistance").value),
-      fittingsEq: num($("fittingsEq").value),
-      pipeSize: $("pipeSize").value,
-      elev: num($("elev").value),
-      equipHead: num($("equipHead").value),
-      cHw: num($("cHw").value),
-      applyTo: $("applyTo").value
+      equipDistance: num($("equipDistance")?.value),
+      fittingsEq: num($("fittingsEq")?.value),
+      pipeSize: $("pipeSize")?.value,
+      elev: num($("elev")?.value),
+      equipHead: num($("equipHead")?.value),
+      cHw: num($("cHw")?.value),
+      applyTo: $("applyTo")?.value
     }
   };
 
@@ -619,22 +670,26 @@ function importJson(ev) {
 
       state.wf = Array.isArray(d.wf) ? d.wf : state.wf;
       state.pumps = Array.isArray(d.pumps) ? d.pumps : state.pumps;
-      state.curves = d.curves || state.curves;
+
+      state.curves = normalizeCurvesKeys(d.curves) || state.curves;
 
       if (d.eng) {
-        $("equipDistance").value = d.eng.equipDistance ?? "";
-        $("fittingsEq").value = d.eng.fittingsEq ?? 60;
-        $("pipeSize").value = d.eng.pipeSize || "2.5";
-        $("elev").value = d.eng.elev ?? "";
-        $("equipHead").value = d.eng.equipHead ?? 10;
-        $("cHw").value = d.eng.cHw ?? 140;
-        $("applyTo").value = d.eng.applyTo || "shared";
+        if ($("equipDistance")) $("equipDistance").value = d.eng.equipDistance ?? "";
+        if ($("fittingsEq")) $("fittingsEq").value = d.eng.fittingsEq ?? 60;
+        if ($("pipeSize")) $("pipeSize").value = d.eng.pipeSize || "2.5";
+        if ($("elev")) $("elev").value = d.eng.elev ?? "";
+        if ($("equipHead")) $("equipHead").value = d.eng.equipHead ?? 10;
+        if ($("cHw")) $("cHw").value = d.eng.cHw ?? 140;
+        if ($("applyTo")) $("applyTo").value = d.eng.applyTo || "shared";
       }
 
-      state.selPump = state.pumps?.[0]?.id || null;
       renderWF();
       renderPumps();
+
+      if (!state.selPump && state.pumps.length) state.selPump = state.pumps[0].id;
+
       recalc();
+      updateChart();
     } catch {
       alert("Invalid JSON file");
     }
@@ -642,7 +697,7 @@ function importJson(ev) {
   r.readAsText(f);
 }
 
-/* ---------- INIT / HOOKS ---------- */
+/* -------------------- HOOKS / INIT -------------------- */
 $("turnoverPreset").onchange = () => {
   const c = $("turnoverCustom");
   c.disabled = $("turnoverPreset").value !== "custom";
@@ -663,13 +718,14 @@ $("addPump").onclick = () => {
     id: "P" + String(state.pumps.length + 1).padStart(2, "0"),
     model: "jandy_vs_27",
     qty: 1,
-    sys: "Pool",
+    sys: "Shared (Pool + Water)",
     tdh: 50
   };
   state.pumps.push(p);
   if (!state.selPump) state.selPump = p.id;
   renderPumps();
   recalc();
+  updateChart();
 };
 
 ["spaMode","spaSetup","spaVolume","spaTurnover","spaJets","gpmPerJet","spaTdh"].forEach(id => $(id).oninput = recalc);
@@ -679,16 +735,26 @@ $("spaSetup").onchange = recalc;
 $("btnEditCurves").onclick = openModal;
 $("btnCloseCurves").onclick = closeModal;
 $("btnSaveCurves").onclick = () => { closeModal(); recalc(); };
-$("btnResetCurves").onclick = () => { state.curves = defaults(); renderTabs(); renderLines(); recalc(); };
+$("btnResetCurves").onclick = () => {
+  state.curves = normalizeCurvesKeys(defaults());
+  renderTabs(); renderLines(); recalc();
+};
 $("btnAddCurveLine").onclick = () => {
   (state.curves[state.modalPump] ??= []).push({ rpm: 3000, label: "RPM", pts: [[0,50],[50,40],[100,25]] });
   renderLines();
 };
 
-$("btnEstimateTdh").onclick = estimateTdh;
 $("btnExport").onclick = exportJson;
 $("fileImport").onchange = importJson;
 $("btnPrint").onclick = () => window.print();
+
+// Auto TDH: re-run when engineering inputs change
+["equipDistance","fittingsEq","pipeSize","elev","equipHead","cHw","applyTo"].forEach(id => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("input", recalc);
+  el.addEventListener("change", recalc);
+});
 
 initChart();
 $("addWF").click();
