@@ -4,252 +4,268 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Pool Pump Sizing Tool</title>
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-
+  <link rel="stylesheet" href="./style.css" />
   <style>
-    /* Small add-ons for PASS/FAIL badges + mode boxes */
-    .modeBox{margin-top:10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px;background:rgba(0,0,0,.12)}
-    .modeGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    @media(max-width:650px){.modeGrid{grid-template-columns:1fr}}
-    .badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-weight:800;font-size:12px;border:1px solid rgba(255,255,255,.12)}
-    .ok{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.45)}
-    .bad{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.45)}
-    .mid{background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.45)}
-    .kpi{display:flex;justify-content:space-between;gap:10px;margin-top:6px;color:rgba(234,240,255,.85);font-size:13px}
-    .kpi b{color:#eaf0ff}
-    .muted2{color:rgba(234,240,255,.65);font-size:12px;margin-top:4px}
-    .spaHeader{display:flex;justify-content:space-between;align-items:center;gap:10px}
-    .toggle{display:flex;align-items:center;gap:8px}
-    .toggle input{width:auto;margin:0}
-    .mini{font-size:12px;color:rgba(234,240,255,.75)}
+    /* Minimal fallback styles (حتى لو style.css فاضي) */
+    :root{
+      --bg:#050b1c; --panel:#0b1228; --line:#1f2a44; --txt:#e5e7eb; --muted:#94a3b8;
+      --btn:#111a33; --btn2:#0f172a; --accent:#38bdf8;
+    }
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--txt);}
+    .wrap{max-width:1100px;margin:0 auto;padding:22px;}
+    .top{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border:1px solid rgba(148,163,184,0.12); border-radius:16px; padding:14px;}
+    label{display:block;font-size:12px;color:var(--muted);margin:0 0 6px;}
+    input,select,textarea{
+      width:100%; box-sizing:border-box; border-radius:12px; border:1px solid rgba(148,163,184,0.18);
+      background:rgba(2,6,23,0.35); color:var(--txt); padding:10px 12px; outline:none;
+    }
+    textarea{min-height:120px; resize:vertical; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+    .btn{
+      border:1px solid rgba(148,163,184,0.18); background:rgba(2,6,23,0.35); color:var(--txt);
+      padding:10px 12px; border-radius:12px; cursor:pointer;
+    }
+    .btn.primary{border-color:rgba(56,189,248,0.45);}
+    .btn:hover{filter:brightness(1.08);}
+    .sectionTitle{font-weight:700;margin:0 0 10px;}
+    #curveViewer{margin-top:14px;}
+    /* Modal */
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;align-items:center;justify-content:center;padding:16px;}
+    .modal{max-width:980px;width:100%; max-height:90vh; overflow:auto;}
+    .modalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px;}
+    .tab{padding:8px 10px;border-radius:999px;border:1px solid rgba(148,163,184,0.18);background:rgba(2,6,23,0.35);cursor:pointer;}
+    .tab.active{border-color:rgba(56,189,248,0.55); box-shadow:0 0 0 2px rgba(56,189,248,0.10) inset;}
+    .rpmBlock{border-top:1px solid rgba(148,163,184,0.12); padding-top:12px; margin-top:12px;}
+    .twoCol{display:grid;grid-template-columns:220px 1fr;gap:12px;align-items:start;}
+    .small{font-size:12px;color:var(--muted);}
+    .footerBtns{display:flex;gap:10px;justify-content:flex-end;margin-top:12px;}
   </style>
 </head>
 
 <body>
-<header class="bar">
-  <div class="t">Pool Pump Sizing Tool</div>
-  <div class="a">
-    <button id="btnExport">Export JSON</button>
-    <label class="file">Import JSON<input id="fileImport" type="file" accept=".json"></label>
-    <button id="btnPrint">Print</button>
-  </div>
-</header>
+  <div class="wrap">
+    <h2 style="margin:0 0 14px;">Pool Pump Sizing Tool</h2>
 
-<main class="wrap">
-  <section class="grid">
-
-    <!-- LEFT: PROJECT / FLOWS -->
-    <div class="card">
-      <h2>Project</h2>
-
-      <div class="g2">
-        <label>Client / Project Name
-          <input id="clientName" placeholder="e.g., Johnson Residence">
-        </label>
-
-        <label>City / State
-          <input id="location" placeholder="e.g., Houston, TX">
-        </label>
-
-        <label>Pool Volume (gallons)
-          <input id="poolVolume" type="number" min="0" placeholder="e.g., 18000">
-        </label>
-
-        <label>Pool Turnover (hours)
-          <div class="row">
-            <select id="turnoverPreset">
-              <option value="6">6</option>
-              <option value="8" selected>8</option>
-              <option value="10">10</option>
-              <option value="12">12</option>
-              <option value="custom">Custom</option>
-            </select>
-            <input id="turnoverCustom" type="number" min="1" step="0.5" placeholder="Custom" disabled>
-          </div>
-        </label>
-      </div>
-
-      <div class="row between" style="margin-top:10px">
-        <h3>Water Features</h3>
-        <button id="addWF">+ Add</button>
-      </div>
-
-      <div class="tbl">
-        <div class="th">
-          <div>Type</div><div class="r">Qty</div><div class="r">Width (ft)</div><div class="r">GPM / ft</div><div class="r">Row GPM</div><div></div>
-        </div>
-        <div id="wfBody"></div>
-      </div>
-
-      <div class="sum">
-        <div><span>Pool Turnover Flow</span><b id="turnoverGpm">—</b></div>
-        <div><span>Water Features Flow</span><b id="wfGpm">—</b></div>
-        <div class="tot"><span>Pool Mode Required Flow</span><b id="poolModeGpm">—</b></div>
-      </div>
-
-      <!-- SPA -->
-      <div class="modeBox" style="margin-top:12px">
-        <div class="spaHeader">
+    <div class="top">
+      <div class="card" style="flex:1;min-width:280px;">
+        <div class="sectionTitle">Chart Inputs</div>
+        <div class="row">
           <div>
-            <b>SPA</b>
-            <div class="muted2">Spa Mode = Spa Only (Pool + Features OFF)</div>
-          </div>
-          <div class="toggle">
-            <span class="mini">Spa Mode</span>
-            <input id="spaMode" type="checkbox">
-          </div>
-        </div>
-
-        <div class="g2" style="margin-top:10px">
-          <label>Spa Pump Setup
-            <select id="spaSetup">
-              <option value="shared" selected>Shared with Pool Pump (Valve Mode)</option>
-              <option value="dedicated">Dedicated Spa Pump</option>
+            <label>Pump Model</label>
+            <select id="pumpModelSelect">
+              <!-- app.js will auto-fill -->
             </select>
-          </label>
+          </div>
 
-          <label>Spa Volume (gallons) (optional)
-            <input id="spaVolume" type="number" min="0" placeholder="e.g., 800">
-          </label>
-
-          <label>Spa Turnover (hours) (optional)
-            <input id="spaTurnover" type="number" min="0" step="0.5" placeholder="e.g., 1">
-          </label>
-
-          <label>Spa Jets (Qty)
-            <input id="spaJets" type="number" min="0" step="1" value="0">
-          </label>
-
-          <label>GPM per Jet
-            <input id="gpmPerJet" type="number" min="0" step="0.5" value="12">
-          </label>
-
-          <label>Spa Mode TDH (ft)
-            <input id="spaTdh" type="number" min="0" step="0.5" value="50">
-          </label>
-        </div>
-
-        <div class="sum" style="margin-top:10px">
-          <div><span>Spa Jets Flow</span><b id="spaJetsGpm">—</b></div>
-          <div><span>Spa Turnover Flow</span><b id="spaTurnoverGpm">—</b></div>
-          <div class="tot"><span>Spa Mode Required Flow</span><b id="spaModeGpm">—</b></div>
-        </div>
-      </div>
-
-      <!-- Mode Results -->
-      <div class="modeBox">
-        <div class="modeGrid">
           <div>
-            <div class="kpi"><span><b>POOL MODE</b> (Spa OFF)</span><span id="poolModeBadge" class="badge mid">—</span></div>
-            <div class="muted2" id="poolModeLine">Required: —</div>
+            <label>Target TDH (ft)</label>
+            <input id="tdhInput" type="number" step="0.1" value="50" />
           </div>
+
           <div>
-            <div class="kpi"><span><b>SPA MODE</b> (Spa Only)</span><span id="spaModeBadge" class="badge mid">—</span></div>
-            <div class="muted2" id="spaModeLine">Required: —</div>
+            <label>Required Flow (GPM)</label>
+            <input id="requiredFlowInput" type="number" step="0.1" value="94.2" />
+          </div>
+
+          <div style="display:flex;gap:10px;align-items:end;">
+            <button class="btn primary" id="openCurvesBtn" style="width:100%;">Edit Curves</button>
           </div>
         </div>
-      </div>
-    </div>
 
-    <!-- RIGHT: PUMPS / CURVES -->
-    <div class="card">
-      <div class="row between">
-        <h2>Pumps</h2>
-        <button id="addPump">+ Add Pump</button>
+        <p class="small" style="margin:10px 0 0;">
+          صيغة النقاط داخل المنحنى: <b>GPM,TDH</b> (سطر لكل نقطة) مثل: <code>0,95</code>
+        </p>
       </div>
 
-      <div class="muted2">Add unlimited pumps. Assign each pump to Pool / Water Features / Spa / Shared.</div>
-
-      <div class="tbl">
-        <div class="th pumps">
-          <div>Pump Model</div><div class="r">Qty</div><div>System</div><div class="r">TDH (ft)</div><div class="r">Status</div><div></div>
+      <div class="card" style="flex:1;min-width:320px;">
+        <div class="sectionTitle">Curve Viewer</div>
+        <div id="curveViewer">
+          <!-- app.js will create canvas #curveCanvas if missing -->
+          <canvas id="curveCanvas" style="width:100%;height:360px;border-radius:14px;background:rgba(2,6,23,0.25);display:block;"></canvas>
         </div>
-        <div id="pumpBody"></div>
       </div>
-
-      <div class="row between" style="margin-top:12px">
-        <h3>Curve Viewer</h3>
-        <button id="btnEditCurves">Edit Curves</button>
-      </div>
-
-      <div class="chart"><canvas id="curveChart"></canvas></div>
-
-      <details class="eng">
-        <summary>Engineering Inputs (optional TDH estimator)</summary>
-        <div class="g2">
-          <label>Equipment distance (one-way) (ft)
-            <input id="equipDistance" type="number" min="0" step="1" placeholder="e.g., 50">
-          </label>
-          <label>Extra fittings allowance (ft)
-            <input id="fittingsEq" type="number" min="0" step="1" value="60">
-          </label>
-
-          <label>Pipe size (in)
-            <select id="pipeSize">
-              <option value="1.5">1.5</option>
-              <option value="2">2</option>
-              <option value="2.5" selected>2.5</option>
-              <option value="3">3</option>
-            </select>
-          </label>
-
-          <label>Elevation (ft)
-            <input id="elev" type="number" step="0.5" placeholder="e.g., 5">
-          </label>
-
-          <label>Equipment head (ft)
-            <input id="equipHead" type="number" step="0.5" value="10">
-          </label>
-
-          <label>C (Hazen–Williams)
-            <input id="cHw" type="number" value="140">
-          </label>
-
-          <label>Apply TDH to
-            <select id="applyTo">
-              <option value="pool">Pool pumps</option>
-              <option value="water">Water feature pumps</option>
-              <option value="spa">Spa pumps</option>
-              <option value="shared" selected>Shared pumps</option>
-              <option value="all">All pumps</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="row between">
-          <button id="btnEstimateTdh">Estimate TDH</button>
-          <div class="pill" id="tdhOut">TDH: —</div>
-        </div>
-      </details>
-    </div>
-
-  </section>
-</main>
-
-<!-- Curves Modal -->
-<div class="modal" id="curvesModal" aria-hidden="true">
-  <div class="mcard">
-    <div class="row between">
-      <div>
-        <b>Pump Curves</b>
-        <div class="small">Paste points: <b>GPM,TDH</b> (one per line)</div>
-      </div>
-      <button id="btnCloseCurves">Close</button>
-    </div>
-    <div id="curveTabs" class="tabs"></div>
-    <div class="row between" style="margin-top:8px">
-      <span class="small">RPM Lines</span>
-      <button id="btnAddCurveLine">+ Add RPM</button>
-    </div>
-    <div id="curveLines"></div>
-    <div class="row between" style="margin-top:10px">
-      <button id="btnResetCurves">Reset Defaults</button>
-      <button id="btnSaveCurves">Save</button>
     </div>
   </div>
-</div>
 
-<script src="app.js"></script>
+  <!-- Modal: Edit Curves -->
+  <div class="modalBack" id="curvesModal">
+    <div class="card modal">
+      <div class="modalHeader">
+        <div>
+          <div class="sectionTitle" style="margin:0;">Pump Curves</div>
+          <div class="small">Paste points: <b>GPM,TDH</b> (one per line)</div>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn" id="closeCurvesBtn">Close</button>
+        </div>
+      </div>
+
+      <!-- Tabs (match keys in app.js DEFAULT_CURVES) -->
+      <div class="tabs" id="curveTabs">
+        <button class="tab active" data-tab="jandy-vsflo-pro-2.7">Jandy VS FloPro 2.7 HP</button>
+        <button class="tab" data-tab="jandy-vsflo-pro-1.85">Jandy VS FloPro 1.85 HP</button>
+        <button class="tab" data-tab="jandy-fhpm-1.0">Jandy FloPro FHPM 1.0 HP</button>
+        <button class="tab" data-tab="jandy-vsflo-pro-3.8">Jandy VS FloPro 3.8 HP</button>
+      </div>
+
+      <!-- Panels -->
+      <div id="tabPanels">
+
+        <!-- 2.7 -->
+        <div class="panel" data-panel="jandy-vsflo-pro-2.7" style="display:block;">
+          <div class="rpmBlock">
+            <div class="twoCol">
+              <div>
+                <label>RPM</label>
+                <input value="3450" disabled />
+                <label style="margin-top:10px;">Label</label>
+                <input value="3450 RPM" disabled />
+              </div>
+              <div>
+                <label>Points</label>
+                <textarea data-curve="jandy-vsflo-pro-2.7" data-rpm="3450"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="rpmBlock">
+            <div class="twoCol">
+              <div>
+                <label>RPM</label>
+                <input value="3000" disabled />
+                <label style="margin-top:10px;">Label</label>
+                <input value="3000 RPM" disabled />
+              </div>
+              <div>
+                <label>Points</label>
+                <textarea data-curve="jandy-vsflo-pro-2.7" data-rpm="3000"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1.85 -->
+        <div class="panel" data-panel="jandy-vsflo-pro-1.85" style="display:none;">
+          <div class="rpmBlock">
+            <div class="twoCol">
+              <div>
+                <label>RPM</label>
+                <input value="3450" disabled />
+                <label style="margin-top:10px;">Label</label>
+                <input value="3450 RPM" disabled />
+              </div>
+              <div>
+                <label>Points</label>
+                <textarea data-curve="jandy-vsflo-pro-1.85" data-rpm="3450"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="rpmBlock">
+            <div class="twoCol">
+              <div>
+                <label>RPM</label>
+                <input value="3000" disabled />
+                <label style="margin-top:10px;">Label</label>
+                <input value="3000 RPM" disabled />
+              </div>
+              <div>
+                <label>Points</label>
+                <textarea data-curve="jandy-vsflo-pro-1.85" data-rpm="3000"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FHPM 1.0 -->
+        <div class="panel" data-panel="jandy-fhpm-1.0" style="display:none;">
+          <div class="rpmBlock">
+            <div class="twoCol">
+              <div>
+                <label>RPM</label>
+                <input value="3450" disabled />
+                <label style="margin-top:10px;">Label</label>
+                <input value="FHPM 1.0 (Hi)" disabled />
+              </div>
+              <div>
+                <label>Points</label>
+                <textarea data-curve="jandy-fhpm-1.0" data-rpm="3450"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3.8 -->
+        <div class="panel" data-panel="jandy-vsflo-pro-3.8" style="display:none;">
+          <div class="rpmBlock">
+            <div class="twoCol">
+              <div>
+                <label>RPM</label>
+                <input value="3450" disabled />
+                <label style="margin-top:10px;">Label</label>
+                <input value="3450 RPM" disabled />
+              </div>
+              <div>
+                <label>Points</label>
+                <textarea data-curve="jandy-vsflo-pro-3.8" data-rpm="3450"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="rpmBlock">
+            <div class="twoCol">
+              <div>
+                <label>RPM</label>
+                <input value="3000" disabled />
+                <label style="margin-top:10px;">Label</label>
+                <input value="3000 RPM" disabled />
+              </div>
+              <div>
+                <label>Points</label>
+                <textarea data-curve="jandy-vsflo-pro-3.8" data-rpm="3000"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="footerBtns">
+        <button class="btn" id="saveCurvesBtn">Save Curves</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // simple modal + tabs (independent from app.js)
+    const modal = document.getElementById("curvesModal");
+    const openBtn = document.getElementById("openCurvesBtn");
+    const closeBtn = document.getElementById("closeCurvesBtn");
+
+    openBtn.addEventListener("click", () => { modal.style.display = "flex"; });
+    closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+    modal.addEventListener("click", (e) => { if (e.target === modal) modal.style.display = "none"; });
+
+    const tabs = Array.from(document.querySelectorAll("#curveTabs .tab"));
+    const panels = Array.from(document.querySelectorAll("#tabPanels .panel"));
+
+    tabs.forEach(t => {
+      t.addEventListener("click", () => {
+        tabs.forEach(x => x.classList.remove("active"));
+        t.classList.add("active");
+
+        const key = t.getAttribute("data-tab");
+        panels.forEach(p => p.style.display = (p.getAttribute("data-panel") === key) ? "block" : "none");
+
+        // Also switch pump in chart to match selected tab (optional)
+        if (window.PoolPumpApp?.setPump) window.PoolPumpApp.setPump(key);
+      });
+    });
+  </script>
+
+  <script src="./app.js"></script>
 </body>
 </html>
