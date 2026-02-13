@@ -2,249 +2,299 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Pool Pump Sizing Tool</title>
-  <link rel="stylesheet" href="./style.css" />
+  <style>
+    :root{
+      --bg:#071022; --card:#0b1730; --card2:#0a142a; --text:#e8eefc; --muted:#95a3c7;
+      --line:rgba(255,255,255,.08); --good:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+      --btn:#142247; --btn2:#0d1a36;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 600px at 50% 80%, rgba(80,130,255,.12), transparent), var(--bg);color:var(--text);font:14px system-ui,Segoe UI,Arial}
+    .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 18px}
+    .title{font-weight:800;letter-spacing:.2px}
+    .actions{display:flex;gap:10px}
+    .btn{background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:10px;cursor:pointer}
+    .btn:hover{border-color:rgba(255,255,255,.18)}
+    .layout{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;padding:0 14px 14px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));border:1px solid var(--line);border-radius:18px;padding:14px}
+    .card h2{margin:0 0 10px;font-size:16px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .row{display:flex;gap:10px;align-items:center}
+    label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
+    input,select,textarea{width:100%;background:rgba(0,0,0,.18);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:10px}
+    textarea{min-height:86px;resize:vertical}
+    .sectionTitle{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+    .small{color:var(--muted);font-size:12px}
+    .tableHead,.wfRow{display:grid;grid-template-columns:1.3fr .5fr .6fr .6fr .7fr .2fr;gap:8px;align-items:center}
+    .tableHead{color:var(--muted);font-size:12px;margin-top:8px;padding:6px 4px}
+    .wfRow{padding:6px 4px;border-top:1px dashed rgba(255,255,255,.06)}
+    .xbtn{width:36px;height:36px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--text);cursor:pointer}
+    .xbtn:hover{border-color:rgba(255,255,255,.18)}
+    .stats{margin-top:10px;border-top:1px solid rgba(255,255,255,.06);padding-top:10px}
+    .statLine{display:flex;justify-content:space-between;padding:6px 0}
+    .statLine b{font-size:16px}
+    .rightCol{display:flex;flex-direction:column;gap:14px}
+    .pumpsHead{display:flex;align-items:center;justify-content:space-between}
+    .pumpRow{display:grid;grid-template-columns:1.35fr .45fr .7fr .7fr .55fr .2fr;gap:8px;align-items:center;padding:8px 0;border-top:1px dashed rgba(255,255,255,.06)}
+    .badge{display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:999px;font-weight:700;font-size:12px;border:1px solid rgba(255,255,255,.12)}
+    .pass{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.35);color:#bff7d0}
+    .close{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.35);color:#ffe2b2}
+    .fail{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35);color:#ffd0d0}
+    .canvasWrap{margin-top:8px;border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden;background:rgba(0,0,0,.12)}
+    canvas{display:block;width:100%;height:280px}
+    .engGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .engFooter{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+    .tdhBadge{padding:8px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.85)}
+    details summary{cursor:pointer;color:rgba(255,255,255,.85);font-weight:700}
+    .modeBar{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .modeCard{padding:10px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.12);display:flex;align-items:center;justify-content:space-between}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:18px}
+    .modal.hidden{display:none}
+    .modalBox{width:min(980px,100%);max-height:86vh;overflow:auto;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:14px}
+    .tabs{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+    .tab{border:1px solid rgba(255,255,255,.10);background:rgba(0,0,0,.18);color:var(--text);padding:8px 10px;border-radius:999px;cursor:pointer}
+    .tab.active{border-color:rgba(86,204,242,.55);box-shadow:0 0 0 2px rgba(86,204,242,.10) inset}
+    .rpmCard{border-top:1px dashed rgba(255,255,255,.10);padding-top:12px;margin-top:12px}
+    .rpmHeader{display:flex;gap:10px;align-items:center}
+    .rpmHeader .grow{flex:1}
+    .hint{color:var(--muted);font-size:12px}
+  </style>
 </head>
 <body>
-  <div class="app">
-    <header class="topbar">
-      <div class="title">Pool Pump Sizing Tool</div>
-      <div class="actions">
-        <button id="exportJsonBtn" class="btn">Export JSON</button>
-        <label class="btn">
-          Import JSON
-          <input id="importJsonFile" type="file" accept="application/json" style="display:none" />
-        </label>
-        <button id="printBtn" class="btn">Print</button>
-      </div>
-    </header>
+  <div class="topbar">
+    <div class="title">Pool Pump Sizing Tool</div>
+    <div class="actions">
+      <button class="btn" id="btnExport">Export JSON</button>
+      <button class="btn" id="btnImport">Import JSON</button>
+      <button class="btn" id="btnPrint">Print</button>
+      <input id="fileImport" type="file" accept="application/json" style="display:none" />
+    </div>
+  </div>
 
-    <main class="grid">
-      <!-- LEFT -->
-      <section class="card">
-        <h2>Project</h2>
-
-        <div class="row2">
-          <div class="field">
-            <label>Client / Project Name</label>
-            <input id="clientName" type="text" placeholder="e.g., Johnson Residence" />
-          </div>
-          <div class="field">
-            <label>City / State</label>
-            <input id="cityState" type="text" placeholder="e.g., Houston, TX" />
-          </div>
+  <div class="layout">
+    <!-- LEFT -->
+    <div class="card">
+      <h2>Project</h2>
+      <div class="grid2">
+        <div>
+          <label>Client / Project Name</label>
+          <input id="inClient" placeholder="e.g., Johnson Residence" />
         </div>
-
-        <div class="row2">
-          <div class="field">
-            <label>Pool Volume (gallons)</label>
-            <input id="poolVolume" type="number" min="0" step="1" placeholder="e.g., 18000" />
-          </div>
-          <div class="field">
+        <div>
+          <label>City / State</label>
+          <input id="inCity" placeholder="e.g., Houston, TX" />
+        </div>
+        <div>
+          <label>Pool Volume (gallons)</label>
+          <input id="inPoolVol" type="number" min="0" step="1" placeholder="e.g., 18000" />
+        </div>
+        <div class="row" style="gap:10px">
+          <div style="flex:1">
             <label>Pool Turnover (hours)</label>
-            <select id="poolTurnoverHours">
-              <option value="6">6</option>
+            <select id="selTurnover">
+              <option value="4">4</option>
+              <option value="6" selected>6</option>
               <option value="8">8</option>
               <option value="10">10</option>
               <option value="12">12</option>
             </select>
           </div>
-        </div>
-
-        <h3>Water Features</h3>
-        <div class="wf-header">
-          <button id="addWaterFeatureBtn" class="btn">+ Add</button>
-        </div>
-
-        <div class="wf-table">
-          <div class="wf-head">
-            <div>Type</div><div>Qty</div><div>Width (ft)</div><div>GPM / ft</div><div>Row GPM</div><div></div>
-          </div>
-          <div id="waterFeaturesList"></div>
-        </div>
-
-        <div class="totals">
-          <div class="total-row"><span>Pool Turnover Flow</span><strong id="poolTurnoverFlow">—</strong></div>
-          <div class="total-row"><span>Water Features Flow</span><strong id="waterFeaturesFlow">—</strong></div>
-          <div class="total-row"><span>Pool Mode Required Flow</span><strong id="poolRequiredFlow">—</strong></div>
-        </div>
-
-        <h3>SPA</h3>
-        <div class="row2">
-          <div class="field">
-            <label>Spa Mode</label>
-            <label style="display:flex; gap:8px; align-items:center;">
-              <input id="spaModeToggle" type="checkbox" />
-              <span>Enable</span>
-            </label>
-          </div>
-          <div class="field">
-            <label>Spa Pump Setup</label>
-            <select id="spaPumpSetup">
-              <option value="shared">Shared with Pool Pump (Valve Mode)</option>
-              <option value="dedicated">Dedicated Spa Pump</option>
-            </select>
+          <div style="flex:1">
+            <label>Custom</label>
+            <input id="inTurnoverCustom" type="number" min="1" step="0.5" placeholder="(optional)" />
           </div>
         </div>
-
-        <div class="row2">
-          <div class="field">
-            <label>Spa Volume (gallons) (optional)</label>
-            <input id="spaVolume" type="number" min="0" step="1" />
-          </div>
-          <div class="field">
-            <label>Spa Turnover (hours) (optional)</label>
-            <input id="spaTurnoverHours" type="number" min="0" step="0.5" />
-          </div>
-        </div>
-
-        <div class="row2">
-          <div class="field">
-            <label>Spa Jets (Qty)</label>
-            <input id="spaJetsQty" type="number" min="0" step="1" />
-          </div>
-          <div class="field">
-            <label>GPM per Jet</label>
-            <input id="gpmPerJet" type="number" min="0" step="0.1" />
-          </div>
-        </div>
-
-        <div class="row2">
-          <div class="field">
-            <label>Spa Mode TDH (ft)</label>
-            <input id="spaModeTdh" type="number" min="0" step="0.1" value="50" />
-          </div>
-          <div></div>
-        </div>
-
-        <div class="totals">
-          <div class="total-row"><span>Spa Jets Flow</span><strong id="spaJetsFlow">—</strong></div>
-          <div class="total-row"><span>Spa Turnover Flow</span><strong id="spaTurnoverFlow">—</strong></div>
-          <div class="total-row"><span>Spa Mode Required Flow</span><strong id="spaRequiredFlow">—</strong></div>
-        </div>
-
-        <div class="modes">
-          <div class="mode-card">
-            <div class="mode-title">POOL MODE (Spa OFF)</div>
-            <div id="poolModeRequired">Required: —</div>
-            <div id="poolModeStatus" class="mode-status">—</div>
-          </div>
-          <div class="mode-card">
-            <div class="mode-title">SPA MODE (Spa Only)</div>
-            <div id="spaModeRequired">Required: —</div>
-            <div id="spaModeStatus" class="mode-status">—</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- RIGHT -->
-      <section class="card">
-        <div class="right-head">
-          <h2>Pumps</h2>
-          <button id="addPumpBtn" class="btn">+ Add Pump</button>
-        </div>
-
-        <div class="pump-table">
-          <div class="pump-head">
-            <div>Pump Model</div><div>Qty</div><div>System</div><div>TDH (ft)</div><div>Status</div><div></div>
-          </div>
-          <div id="pumpsList"></div>
-        </div>
-
-        <div class="curve-head">
-          <h3>Curve Viewer</h3>
-          <button id="editCurvesBtn" class="btn">Edit Curves</button>
-        </div>
-
-        <div class="curve-box">
-          <canvas id="curveCanvas"></canvas>
-        </div>
-
-        <details class="card-lite" open>
-          <summary>Engineering Inputs (optional TDH estimator)</summary>
-
-          <div class="row2">
-            <div class="field">
-              <label>Equipment distance (one-way) (ft)</label>
-              <input id="equipDistance" type="number" min="0" step="1" placeholder="e.g., 50" />
-            </div>
-            <div class="field">
-              <label>Extra fittings allowance (ft)</label>
-              <input id="extraFittings" type="number" min="0" step="1" value="60" />
-            </div>
-          </div>
-
-          <div class="row2">
-            <div class="field">
-              <label>Pipe size (in)</label>
-              <select id="pipeSize">
-                <option value="1.5">1.5</option>
-                <option value="2">2</option>
-                <option value="2.5" selected>2.5</option>
-                <option value="3">3</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Elevation (ft)</label>
-              <input id="elevation" type="number" min="0" step="0.1" placeholder="e.g., 5" />
-            </div>
-          </div>
-
-          <div class="row2">
-            <div class="field">
-              <label>Equipment head (ft)</label>
-              <input id="equipmentHead" type="number" min="0" step="0.1" value="10" />
-            </div>
-            <div class="field">
-              <label>C (Hazen-Williams)</label>
-              <input id="hazenC" type="number" min="1" step="1" value="140" />
-            </div>
-          </div>
-
-          <div class="row2">
-            <div class="field">
-              <label>Apply TDH to</label>
-              <select id="applyTdhTo">
-                <option value="shared">Shared pumps</option>
-                <option value="pool">Pool pumps</option>
-                <option value="features">Water feature pumps</option>
-                <option value="spa">Spa pumps</option>
-                <option value="all">All pumps</option>
-              </select>
-            </div>
-            <div class="field" style="display:flex; align-items:flex-end; gap:10px;">
-              <button id="estimateTdhBtn" class="btn">Estimate TDH</button>
-              <div id="tdhSummary" class="tdh-pill">TDH: —</div>
-            </div>
-          </div>
-        </details>
-      </section>
-    </main>
-  </div>
-
-  <!-- Curves Modal -->
-  <div id="curvesModal" class="modal" style="display:none">
-    <div class="modal-card">
-      <div class="modal-head">
-        <div>
-          <div class="modal-title">Pump Curves</div>
-          <div class="modal-sub">Paste points: GPM,TDH (one per line)</div>
-        </div>
-        <button id="closeCurvesBtn" class="btn">Close</button>
       </div>
 
-      <div id="curveTabs" class="tabs"></div>
-      <div id="curveEditor"></div>
+      <div class="sectionTitle">
+        <div>
+          <h2 style="margin:14px 0 0">Water Features</h2>
+          <div class="small">GPM = Qty × Width(ft) × GPM/ft</div>
+        </div>
+        <button class="btn" id="btnAddWF">+ Add</button>
+      </div>
 
-      <div class="modal-actions">
-        <button id="resetCurvesBtn" class="btn">Reset Defaults</button>
-        <button id="saveCurvesBtn" class="btn">Save</button>
+      <div class="tableHead">
+        <div>Type</div><div>Qty</div><div>Width (ft)</div><div>GPM / ft</div><div>Row GPM</div><div></div>
+      </div>
+      <div id="wfList"></div>
+
+      <div class="stats">
+        <div class="statLine"><span>Pool Turnover Flow</span><b id="outPoolTurn">—</b></div>
+        <div class="statLine"><span>Water Features Flow</span><b id="outWFFlow">—</b></div>
+        <div class="statLine"><span>Pool Mode Required Flow</span><b id="outPoolReq">—</b></div>
+      </div>
+
+      <h2 style="margin:16px 0 6px">SPA</h2>
+      <div class="row" style="justify-content:space-between">
+        <div class="small">Spa Mode = Spa Only (Pool + Features OFF)</div>
+        <div class="row" style="gap:8px;align-items:center">
+          <span class="small">Spa Mode</span>
+          <input id="chkSpaMode" type="checkbox" />
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px">
+        <div>
+          <label>Spa Pump Setup</label>
+          <select id="selSpaSetup">
+            <option value="shared" selected>Shared with Pool Pump (Valve Mode)</option>
+            <option value="separate">Separate Spa Pump</option>
+          </select>
+        </div>
+        <div>
+          <label>Spa Volume (gallons) (optional)</label>
+          <input id="inSpaVol" type="number" min="0" step="1" placeholder="e.g., 600" />
+        </div>
+        <div>
+          <label>Spa Turnover (hours) (optional)</label>
+          <input id="inSpaTurnH" type="number" min="0" step="0.5" placeholder="e.g., 6" />
+        </div>
+        <div>
+          <label>Spa Jets (Qty)</label>
+          <input id="inSpaJetsQty" type="number" min="0" step="1" value="8" />
+        </div>
+        <div>
+          <label>GPM per Jet</label>
+          <input id="inGpmPerJet" type="number" min="0" step="0.5" value="12" />
+        </div>
+        <div>
+          <label>Spa Mode TDH (ft)</label>
+          <input id="inSpaTDH" type="number" min="0" step="0.5" value="50" />
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="statLine"><span>Spa Jets Flow</span><b id="outSpaJets">—</b></div>
+        <div class="statLine"><span>Spa Turnover Flow</span><b id="outSpaTurn">—</b></div>
+        <div class="statLine"><span>Spa Mode Required Flow</span><b id="outSpaReq">—</b></div>
+      </div>
+
+      <div class="modeBar">
+        <div class="modeCard">
+          <div>
+            <div style="font-weight:800">POOL MODE <span class="small">(Spa OFF)</span></div>
+            <div class="small" id="outPoolNeedLine">Required: —</div>
+          </div>
+          <span class="badge" id="badgePoolMode">—</span>
+        </div>
+        <div class="modeCard">
+          <div>
+            <div style="font-weight:800">SPA MODE <span class="small">(Spa Only)</span></div>
+            <div class="small" id="outSpaNeedLine">Required: —</div>
+          </div>
+          <span class="badge" id="badgeSpaMode">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="rightCol">
+      <div class="card">
+        <div class="pumpsHead">
+          <div>
+            <h2 style="margin:0">Pumps</h2>
+            <div class="small">Add pumps and assign each one to Pool / Water Features / Spa / Shared</div>
+          </div>
+          <button class="btn" id="btnAddPump">+ Add Pump</button>
+        </div>
+
+        <div class="tableHead" style="grid-template-columns:1.35fr .45fr .7fr .7fr .55fr .2fr">
+          <div>Pump Model</div><div>Qty</div><div>System</div><div>TDH (ft)</div><div>Status</div><div></div>
+        </div>
+        <div id="pumpsList"></div>
+
+        <div class="sectionTitle" style="margin-top:12px">
+          <div>
+            <h2 style="margin:0">Curve Viewer</h2>
+            <div class="small">Curves + Target TDH + Required Flow + Operating point</div>
+          </div>
+          <button class="btn" id="btnEditCurves">Edit Curves</button>
+        </div>
+
+        <div class="canvasWrap">
+          <canvas id="curveCanvas" width="980" height="280"></canvas>
+        </div>
+
+        <details style="margin-top:12px" open>
+          <summary>Engineering Inputs (optional TDH estimator)</summary>
+          <div class="engGrid" style="margin-top:10px">
+            <div>
+              <label>Equipment distance (one-way) (ft)</label>
+              <input id="inEqDist" type="number" min="0" step="1" placeholder="e.g., 50" />
+            </div>
+            <div>
+              <label>Extra fittings allowance (ft)</label>
+              <input id="inFitAllow" type="number" min="0" step="1" value="60" />
+            </div>
+            <div>
+              <label>Pipe size (in)</label>
+              <select id="selPipeIn">
+                <option value="1.5">1.5</option>
+                <option value="2">2.0</option>
+                <option value="2.5" selected>2.5</option>
+                <option value="3">3.0</option>
+              </select>
+            </div>
+            <div>
+              <label>Elevation (ft)</label>
+              <input id="inElev" type="number" step="0.5" placeholder="e.g., 5" />
+            </div>
+            <div>
+              <label>Equipment head (ft)</label>
+              <input id="inEquipHead" type="number" step="0.5" value="10" />
+            </div>
+            <div>
+              <label>C (Hazen–Williams)</label>
+              <input id="inC" type="number" step="1" value="140" />
+            </div>
+            <div style="grid-column:1 / -1">
+              <label>Apply TDH to</label>
+              <select id="selApplyTDH">
+                <option value="all" selected>All pumps</option>
+                <option value="shared">Shared pumps</option>
+                <option value="pool">Pool</option>
+                <option value="water">Water Features</option>
+                <option value="spa">Spa</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="engFooter">
+            <button class="btn" id="btnEstimateTDH">Estimate TDH</button>
+            <div class="tdhBadge" id="tdhBadge">TDH: —</div>
+          </div>
+        </details>
       </div>
     </div>
   </div>
 
-  <!-- IMPORTANT: must be normal script (not module) -->
-  <script src="./app.js"></script>
+  <!-- Curves Modal -->
+  <div class="modal hidden" id="curvesModal">
+    <div class="modalBox">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div>
+          <div style="font-weight:900;font-size:18px">Pump Curves</div>
+          <div class="hint">Paste points as: <b>GPM,TDH</b> (one per line)</div>
+        </div>
+        <button class="btn" id="btnCloseCurves">Close</button>
+      </div>
+
+      <div class="tabs" id="curveTabs"></div>
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+        <button class="btn" id="btnAddRPM">+ Add RPM</button>
+        <div class="row" style="gap:8px">
+          <button class="btn" id="btnResetCurves">Reset Defaults</button>
+          <button class="btn" id="btnSaveCurves">Save</button>
+        </div>
+      </div>
+
+      <div id="curveEditorBody"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
