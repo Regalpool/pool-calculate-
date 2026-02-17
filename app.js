@@ -1,8 +1,9 @@
 /* ============================================================
-   Pool Pump Sizing Tool - app.js (FULL WORKING + Qty FIX)
+   Pool Pump Sizing Tool - app.js (FULL WORKING + Qty FIX + Reason)
    - Pumps + Water Features + SPA calculations
    - PASS/CLOSE per pump
-   - FIX: Pump Qty now affects PASS/CLOSE (capacity = curveGPM * qty)
+   - FIX: Pump Qty affects PASS/CLOSE (capacity = curveGPM * qty)
+   - NEW: Status shows detailed reason (Req vs Cap, RPM, TDH too high)
    - Curve editor + Canvas curve drawing
    - Optional TDH estimator (Hazen–Williams approx)
    ============================================================ */
@@ -287,25 +288,64 @@
     return calcPoolRequiredFlowGPM(); // Shared
   }
 
-  // Returns the best RPM line and per-pump GPM at TDH (NOT multiplied by qty)
-  function pickBestRPMLine(modelKey, targetTDH, reqFlow) {
-    const model = curves[modelKey];
-    if (!model || !Array.isArray(model.rpmLines) || model.rpmLines.length === 0) return null;
+  /* -----------------------------
+     Detailed status logic
+  ----------------------------- */
+  function maxCurveTDH(modelKey) {
+    const m = curves[modelKey];
+    if (!m || !m.rpmLines?.length) return 0;
+    let max = 0;
+    for (const line of m.rpmLines) {
+      for (const p of (line.points || [])) max = Math.max(max, num(p.tdh, 0));
+    }
+    return max;
+  }
 
-    const candidates = model.rpmLines
-      .map((line) => ({ line, gpm: gpmAtTDH(line.points || [], targetTDH) }))
-      .filter((x) => x.gpm > 0);
+  function statusDetails(pump) {
+    const model = curves[pump.model];
+    const tdh = num(pump.tdh, 0);
+    const req = systemRequiredFlow(pump.system);
+    const qty = Math.max(1, Math.round(num(pump.qty, 1)));
 
-    if (candidates.length === 0) return null;
-
-    const ok = candidates.filter((x) => x.gpm >= reqFlow);
-    if (ok.length) {
-      ok.sort((a, b) => (a.line.rpm || 0) - (b.line.rpm || 0));
-      return ok[0];
+    if (!model || !model.rpmLines?.length) {
+      return { pass: false, text: "CLOSE (No curve data)" };
     }
 
-    candidates.sort((a, b) => b.gpm - a.gpm);
-    return candidates[0];
+    const maxTDH = maxCurveTDH(pump.model);
+    if (tdh > maxTDH && maxTDH > 0) {
+      return { pass: false, text: `CLOSE (TDH too high: max ${round1(maxTDH)} < ${round1(tdh)})` };
+    }
+
+    // evaluate each RPM line
+    const candidates = model.rpmLines.map((line) => {
+      const per = gpmAtTDH(line.points || [], tdh);
+      return { line, per, total: per * qty };
+    }).filter(x => x.per > 0);
+
+    if (!candidates.length) {
+      return { pass: false, text: `CLOSE (No flow @ ${round1(tdh)} ft)` };
+    }
+
+    // lowest RPM that passes
+    const ok = candidates.filter(x => x.total >= req);
+    if (ok.length) {
+      ok.sort((a, b) => (a.line.rpm || 0) - (b.line.rpm || 0));
+      const best = ok[0];
+      return {
+        pass: true,
+        text: `PASS (Req ${round1(req)} ≤ Cap ${round1(best.total)} @ ${best.line.label || best.line.rpm + " RPM"}, Qty ${qty})`,
+        rpmLine: best.line
+      };
+    }
+
+    // choose max capacity to explain why close
+    candidates.sort((a, b) => b.total - a.total);
+    const best = candidates[0];
+    return {
+      pass: false,
+      text: `CLOSE (Req ${round1(req)} > Cap ${round1(best.total)} @ ${best.line.label || best.line.rpm + " RPM"}, Qty ${qty})`,
+      rpmLine: best.line
+    };
   }
 
   /* -----------------------------
@@ -350,59 +390,7 @@
   }
 
   /* -----------------------------
-     PASS/CLOSE logic (FIXED for Qty)
-  ----------------------------- */
-  function pumpCapacityAtTDH(pump, tdh) {
-    const model = curves[pump.model];
-    if (!model || !model.rpmLines?.length) return { best: null, perPumpGpm: 0, totalGpm: 0 };
-
-    // We find best line using required flow per TOTAL, but qty matters,
-    // so we evaluate per line and multiply by qty for total capacity.
-    const qty = Math.max(1, Math.round(num(pump.qty, 1)));
-
-    let bestLine = null;
-    let bestTotal = 0;
-    let bestPerPump = 0;
-
-    for (const line of model.rpmLines) {
-      const per = gpmAtTDH(line.points || [], tdh);
-      if (per <= 0) continue;
-      const total = per * qty;
-      if (total > bestTotal) {
-        bestTotal = total;
-        bestPerPump = per;
-        bestLine = line;
-      }
-    }
-
-    return { best: bestLine ? { line: bestLine } : null, perPumpGpm: bestPerPump, totalGpm: bestTotal };
-  }
-
-  function pumpPass(pump, tdh, reqTotalFlow) {
-    const qty = Math.max(1, Math.round(num(pump.qty, 1)));
-    const model = curves[pump.model];
-    if (!model || !model.rpmLines?.length) return false;
-
-    // choose the lowest RPM that can meet reqTotalFlow using qty
-    const candidates = model.rpmLines
-      .map((line) => {
-        const per = gpmAtTDH(line.points || [], tdh);
-        return { line, per, total: per * qty };
-      })
-      .filter(x => x.per > 0);
-
-    if (!candidates.length) return false;
-
-    const ok = candidates.filter(x => x.total >= reqTotalFlow);
-    if (ok.length) {
-      ok.sort((a, b) => (a.line.rpm || 0) - (b.line.rpm || 0));
-      return true;
-    }
-    return false;
-  }
-
-  /* -----------------------------
-     Rendering
+     Rendering helpers
   ----------------------------- */
   function setBadge(elm, text, kind) {
     if (!elm) return;
@@ -412,6 +400,9 @@
     if (kind) elm.classList.add(kind);
   }
 
+  /* -----------------------------
+     Render sections
+  ----------------------------- */
   function renderProject() {
     el.inClient.value = state.project.client || "";
     el.inCity.value = state.project.city || "";
@@ -481,9 +472,16 @@
 
     state.pumps.forEach((p) => {
       const tdh = num(p.tdh, 0);
-      if (p.system === "Shared") ok = ok || pumpPass(p, tdh, poolReq);
-      else if (p.system === "Pool") ok = ok || pumpPass(p, tdh, poolTurn);
-      else if (p.system === "Water") ok = ok || pumpPass(p, tdh, wf);
+      const qty = Math.max(1, Math.round(num(p.qty, 1)));
+      // use statusDetails to ensure same logic, but here we do quick checks:
+      const reqFlow =
+        p.system === "Shared" ? poolReq :
+        p.system === "Pool" ? poolTurn :
+        p.system === "Water" ? wf : 0;
+
+      const det = statusDetails({ ...p, qty, tdh, system: p.system });
+      // statusDetails uses systemRequiredFlow internally, so this is just for consistency.
+      if (p.system === "Shared" || p.system === "Pool" || p.system === "Water") ok = ok || det.pass;
     });
     return ok;
   }
@@ -494,9 +492,9 @@
     const spaTDH = num(state.spa.spaTDH, 50);
 
     if (state.spa.setup === "shared") {
-      return state.pumps.some((p) => p.system === "Shared" && pumpPass(p, spaTDH, spaReq));
+      return state.pumps.some((p) => p.system === "Shared" && statusDetails({ ...p, tdh: spaTDH }).pass);
     }
-    return state.pumps.some((p) => p.system === "Spa" && pumpPass(p, spaTDH, spaReq));
+    return state.pumps.some((p) => p.system === "Spa" && statusDetails({ ...p, tdh: spaTDH }).pass);
   }
 
   function renderSummary() {
@@ -545,16 +543,8 @@
 
     state.pumps.forEach((p, idx) => {
       const reqFlow = systemRequiredFlow(p.system);
-      const tdh = num(p.tdh, 0);
       const qty = Math.max(1, Math.round(num(p.qty, 1)));
-
-      // total capacity at TDH (max across RPM lines)
-      const cap = pumpCapacityAtTDH(p, tdh);
-      const totalCap = cap.totalGpm;      // already multiplied by qty
-      const perPumpCap = cap.perPumpGpm;  // per pump
-
-      // PASS if ANY RPM line can meet required flow with qty
-      const canMeet = pumpPass(p, tdh, reqFlow);
+      const det = statusDetails(p);
 
       const row = document.createElement("div");
       row.className = "pumpRow";
@@ -575,7 +565,7 @@
         </div>
         <div><input data-k="tdh" type="number" min="0" step="0.5" /></div>
         <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-          <span class="badge ${canMeet ? "pass" : "close"}">${canMeet ? "PASS" : "CLOSE"}</span>
+          <span class="badge ${det.pass ? "pass" : "close"}">${det.pass ? "PASS" : "CLOSE"}</span>
         </div>
         <div style="display:flex;justify-content:flex-end"><button class="xbtn" data-act="rm">✕</button></div>
       `;
@@ -609,11 +599,8 @@
       });
 
       const extra = document.createElement("div");
-      extra.style.cssText = "margin:-2px 0 6px 0;color:rgba(255,255,255,.75);font-size:12px;padding-left:4px";
-      extra.textContent =
-        cap.best
-          ? `Capacity @ ${round1(tdh)} ft: ${round1(perPumpCap)} GPM × Qty(${qty}) = ${round1(totalCap)} GPM | Required: ${round1(reqFlow)}`
-          : `Capacity @ ${round1(tdh)} ft: 0 GPM (TDH too high or no curve points) | Required: ${round1(reqFlow)}`;
+      extra.style.cssText = "margin:-2px 0 10px 0;color:rgba(255,255,255,.80);font-size:12px;padding-left:4px;line-height:1.25";
+      extra.textContent = det.text;
 
       el.pumpsList.appendChild(row);
       el.pumpsList.appendChild(extra);
@@ -730,28 +717,10 @@
     ctx.font = "12px system-ui";
     ctx.fillText(`Required: ${round1(req)} GPM`, xToPx(req) + 6, bounds.top + 18);
     ctx.restore();
-
-    // Operating point marker (per pump) + show total with qty
-    const qty = Math.max(1, Math.round(num(pump.qty, 1)));
-    const cap = pumpCapacityAtTDH(pump, targetTDH);
-    if (cap.best && cap.perPumpGpm > 0) {
-      ctx.save();
-      ctx.fillStyle = "rgba(255, 176, 59, 0.95)";
-      ctx.beginPath();
-      ctx.arc(xToPx(cap.perPumpGpm), yToPx(targetTDH), 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.font = "12px system-ui";
-      ctx.fillText(
-        `Operating (per pump): ${round1(cap.perPumpGpm)} @ ${round1(targetTDH)} ft | Total: ${round1(cap.totalGpm)} (Qty ${qty})`,
-        xToPx(cap.perPumpGpm) + 8,
-        yToPx(targetTDH) - 10
-      );
-      ctx.restore();
-    }
   }
 
   /* -----------------------------
-     Curves Modal
+     Curves Modal (same as before)
   ----------------------------- */
   function openCurvesModal() {
     el.curvesModal.classList.remove("hidden");
@@ -760,12 +729,10 @@
     if (pump && curves[pump.model]) state.ui.curvesActiveModel = pump.model;
     renderCurvesModal();
   }
-
   function closeCurvesModal() {
     el.curvesModal.classList.add("hidden");
     state.ui.curvesModalOpen = false;
   }
-
   function renderCurvesModal() {
     const modelKeys = Object.keys(curves);
     if (!modelKeys.length) return;
@@ -824,7 +791,6 @@
       el.curveEditorBody.appendChild(card);
     });
   }
-
   function addRPMLine() {
     const model = curves[state.ui.curvesActiveModel];
     if (!model) return;
@@ -836,14 +802,12 @@
     });
     renderCurvesModal();
   }
-
   function resetCurves() {
     curves = structuredClone(DEFAULT_CURVES);
     state.ui.curvesActiveModel = Object.keys(curves)[0];
     renderCurvesModal();
     persistAndRecalc();
   }
-
   function saveCurvesAndClose() {
     for (const k of Object.keys(curves)) {
       curves[k].rpmLines = (curves[k].rpmLines || []).map((l) => ({
