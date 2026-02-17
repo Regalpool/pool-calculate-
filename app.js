@@ -24,11 +24,6 @@
   const id8 = () => Math.random().toString(36).slice(2, 10);
 
   function parsePoints(text) {
-    // Supports:
-    // 0,95
-    // 0 , 95
-    // 0 95
-    // 0;95
     const lines = String(text || "")
       .split(/\r?\n/)
       .map((l) => l.trim())
@@ -51,7 +46,6 @@
     return (points || []).map((p) => `${p.gpm},${p.tdh}`).join("\n");
   }
 
-  // Linear interpolation: get GPM at target TDH from a curve line points
   function gpmAtTDH(points, targetTDH) {
     if (!points || points.length < 2) return 0;
 
@@ -92,65 +86,34 @@
     { id: "Bubbler", label: "Bubbler" },
   ];
 
-  // Curves: keep points modest (you can paste full sets in the editor)
   const DEFAULT_CURVES = {
     "Jandy VS FloPro 2.7 HP": {
       modelLabel: "Jandy VS FloPro 2.7 HP",
       rpmLines: [
-        {
-          rpm: 3450, label: "3450 RPM",
-          points: [{gpm:0,tdh:95},{gpm:30,tdh:92},{gpm:60,tdh:86},{gpm:90,tdh:75},{gpm:120,tdh:55},{gpm:135,tdh:44}]
-        },
-        {
-          rpm: 3000, label: "3000 RPM",
-          points: [{gpm:0,tdh:75},{gpm:30,tdh:71},{gpm:60,tdh:63},{gpm:90,tdh:50},{gpm:120,tdh:33}]
-        },
-        {
-          rpm: 2750, label: "2750 RPM",
-          points: [{gpm:0,tdh:63},{gpm:30,tdh:59},{gpm:60,tdh:54},{gpm:90,tdh:40},{gpm:110,tdh:26}]
-        },
+        { rpm: 3450, label: "3450 RPM", points: [{gpm:0,tdh:95},{gpm:30,tdh:92},{gpm:60,tdh:86},{gpm:90,tdh:75},{gpm:120,tdh:55},{gpm:135,tdh:44}] },
+        { rpm: 3000, label: "3000 RPM", points: [{gpm:0,tdh:75},{gpm:30,tdh:71},{gpm:60,tdh:63},{gpm:90,tdh:50},{gpm:120,tdh:33}] },
+        { rpm: 2750, label: "2750 RPM", points: [{gpm:0,tdh:63},{gpm:30,tdh:59},{gpm:60,tdh:54},{gpm:90,tdh:40},{gpm:110,tdh:26}] },
       ],
     },
-
     "Jandy VS FloPro 1.85 HP": {
       modelLabel: "Jandy VS FloPro 1.85 HP",
       rpmLines: [
-        {
-          rpm: 3450, label: "3450 RPM",
-          points: [{gpm:0,tdh:78},{gpm:30,tdh:74},{gpm:60,tdh:68},{gpm:90,tdh:58},{gpm:110,tdh:45},{gpm:120,tdh:32}]
-        },
-        {
-          rpm: 3000, label: "3000 RPM",
-          points: [{gpm:0,tdh:58},{gpm:30,tdh:55},{gpm:60,tdh:50},{gpm:90,tdh:38},{gpm:105,tdh:25}]
-        },
+        { rpm: 3450, label: "3450 RPM", points: [{gpm:0,tdh:78},{gpm:30,tdh:74},{gpm:60,tdh:68},{gpm:90,tdh:58},{gpm:110,tdh:45},{gpm:120,tdh:32}] },
+        { rpm: 3000, label: "3000 RPM", points: [{gpm:0,tdh:58},{gpm:30,tdh:55},{gpm:60,tdh:50},{gpm:90,tdh:38},{gpm:105,tdh:25}] },
       ],
     },
-
     "Jandy FloPro FHPM 1.0 HP": {
       modelLabel: "Jandy FloPro FHPM 1.0 HP",
       rpmLines: [
-        {
-          rpm: 3450, label: "3450 RPM",
-          points: [{gpm:0,tdh:56},{gpm:25,tdh:52},{gpm:50,tdh:44},{gpm:70,tdh:33},{gpm:85,tdh:22}]
-        },
-        {
-          rpm: 2400, label: "2400 RPM",
-          points: [{gpm:0,tdh:28},{gpm:25,tdh:25},{gpm:50,tdh:18},{gpm:60,tdh:12}]
-        },
+        { rpm: 3450, label: "3450 RPM", points: [{gpm:0,tdh:56},{gpm:25,tdh:52},{gpm:50,tdh:44},{gpm:70,tdh:33},{gpm:85,tdh:22}] },
+        { rpm: 2400, label: "2400 RPM", points: [{gpm:0,tdh:28},{gpm:25,tdh:25},{gpm:50,tdh:18},{gpm:60,tdh:12}] },
       ],
     },
-
     "Jandy VS FloPro 3.8 HP": {
       modelLabel: "Jandy VS FloPro 3.8 HP",
       rpmLines: [
-        {
-          rpm: 3450, label: "3450 RPM",
-          points: [{gpm:0,tdh:102},{gpm:40,tdh:98},{gpm:80,tdh:92},{gpm:120,tdh:78},{gpm:160,tdh:50},{gpm:185,tdh:38}]
-        },
-        {
-          rpm: 3000, label: "3000 RPM",
-          points: [{gpm:0,tdh:76},{gpm:40,tdh:74},{gpm:80,tdh:69},{gpm:120,tdh:56},{gpm:160,tdh:30}]
-        },
+        { rpm: 3450, label: "3450 RPM", points: [{gpm:0,tdh:102},{gpm:40,tdh:98},{gpm:80,tdh:92},{gpm:120,tdh:78},{gpm:160,tdh:50},{gpm:185,tdh:38}] },
+        { rpm: 3000, label: "3000 RPM", points: [{gpm:0,tdh:76},{gpm:40,tdh:74},{gpm:80,tdh:69},{gpm:120,tdh:56},{gpm:160,tdh:30}] },
       ],
     },
   };
@@ -165,65 +128,38 @@
 
   const state = {
     project: { client: "", city: "", poolVol: 18000, turnoverH: 6, turnoverCustom: "" },
-    waterFeatures: [
-      { id: id8(), type: "Sheer", qty: 3, width: 2, gpmPerFt: 15 }
-    ],
-    spa: {
-      enabled: false,
-      setup: "shared", // shared | separate
-      spaVol: 600,
-      spaTurnH: 6,
-      jetsQty: 8,
-      gpmPerJet: 12,
-      spaTDH: 50,
-    },
+    waterFeatures: [{ id: id8(), type: "Sheer", qty: 3, width: 2, gpmPerFt: 15 }],
+    spa: { enabled: false, setup: "shared", spaVol: 600, spaTurnH: 6, jetsQty: 8, gpmPerJet: 12, spaTDH: 50 },
     pumps: [
       { id: id8(), model: "Jandy VS FloPro 2.7 HP", qty: 1, system: "Shared", tdh: 50 },
       { id: id8(), model: "Jandy VS FloPro 2.7 HP", qty: 1, system: "Water", tdh: 50 },
     ],
-    ui: {
-      selectedPumpIndex: 0,
-      curvesModalOpen: false,
-      curvesActiveModel: "Jandy VS FloPro 2.7 HP",
-    },
-    engineering: {
-      eqDist: "",
-      fitAllow: 60,
-      pipeIn: 2.5,
-      elev: "",
-      equipHead: 10,
-      C: 140,
-      estimatedTDH: NaN,
-      estimatedFriction: 0,
-      estimatedL: 0,
-    },
+    ui: { selectedPumpIndex: 0, curvesModalOpen: false, curvesActiveModel: "Jandy VS FloPro 2.7 HP" },
+    engineering: { eqDist: "", fitAllow: 60, pipeIn: 2.5, elev: "", equipHead: 10, C: 140, estimatedTDH: NaN, estimatedFriction: 0, estimatedL: 0 },
   };
 
   /* -----------------------------
      DOM
   ----------------------------- */
   const el = {
-    // top actions
     btnExport: $("#btnExport"),
     btnImport: $("#btnImport"),
+    btnRecalc: $("#btnRecalc"),
     fileImport: $("#fileImport"),
     btnPrint: $("#btnPrint"),
 
-    // project
     inClient: $("#inClient"),
     inCity: $("#inCity"),
     inPoolVol: $("#inPoolVol"),
     selTurnover: $("#selTurnover"),
     inTurnCustom: $("#inTurnoverCustom"),
 
-    // water features
     btnAddWF: $("#btnAddWF"),
     wfList: $("#wfList"),
     outPoolTurn: $("#outPoolTurn"),
     outWFFlow: $("#outWFFlow"),
     outPoolReq: $("#outPoolReq"),
 
-    // spa
     chkSpaMode: $("#chkSpaMode"),
     selSpaSetup: $("#selSpaSetup"),
     inSpaVol: $("#inSpaVol"),
@@ -239,15 +175,12 @@
     outPoolNeedLine: $("#outPoolNeedLine"),
     outSpaNeedLine: $("#outSpaNeedLine"),
 
-    // pumps
     btnAddPump: $("#btnAddPump"),
     pumpsList: $("#pumpsList"),
 
-    // curve viewer
     canvas: $("#curveCanvas"),
     btnEditCurves: $("#btnEditCurves"),
 
-    // engineering
     inEqDist: $("#inEqDist"),
     inFitAllow: $("#inFitAllow"),
     selPipeIn: $("#selPipeIn"),
@@ -258,7 +191,6 @@
     btnEstimateTDH: $("#btnEstimateTDH"),
     tdhBadge: $("#tdhBadge"),
 
-    // modal
     curvesModal: $("#curvesModal"),
     btnCloseCurves: $("#btnCloseCurves"),
     curveTabs: $("#curveTabs"),
@@ -344,7 +276,6 @@
   }
 
   function calcSpaRequiredFlowGPM() {
-    // Spa mode required = max(jets flow, turnover flow) (common practice)
     return Math.max(calcSpaJetsFlowGPM(), calcSpaTurnoverFlowGPM());
   }
 
@@ -352,40 +283,31 @@
     if (system === "Pool") return calcPoolTurnoverFlowGPM();
     if (system === "Water") return calcWaterFeaturesFlowGPM();
     if (system === "Spa") return calcSpaRequiredFlowGPM();
-    // Shared = Pool required (pool turnover + water features) in pool mode
-    return calcPoolRequiredFlowGPM();
+    return calcPoolRequiredFlowGPM(); // Shared
   }
 
-  // Choose best RPM line: smallest RPM that can meet required flow at target TDH
   function pickBestRPMLine(modelKey, targetTDH, reqFlow) {
     const model = curves[modelKey];
     if (!model || !Array.isArray(model.rpmLines) || model.rpmLines.length === 0) return null;
 
     const candidates = model.rpmLines
-      .map((line) => {
-        const gpm = gpmAtTDH(line.points || [], targetTDH);
-        return { line, gpm };
-      })
+      .map((line) => ({ line, gpm: gpmAtTDH(line.points || [], targetTDH) }))
       .filter((x) => x.gpm > 0);
 
     if (candidates.length === 0) return null;
 
-    // lines that meet requirement
     const ok = candidates.filter((x) => x.gpm >= reqFlow);
     if (ok.length) {
       ok.sort((a, b) => (a.line.rpm || 0) - (b.line.rpm || 0));
       return ok[0];
     }
 
-    // otherwise max gpm
     candidates.sort((a, b) => b.gpm - a.gpm);
     return candidates[0];
   }
 
   /* -----------------------------
      TDH Estimator (approx)
-     Hazen–Williams: headloss(ft) ≈ 4.52 * L * Q^1.85 / (C^1.85 * d^4.87)
-     Q in GPM, d in inches, L in feet
   ----------------------------- */
   function estimateTDHForFlow(flowGPM) {
     const eqDist = num(state.engineering.eqDist, 0);
@@ -395,11 +317,9 @@
     const C = clamp(num(state.engineering.C, 140), 80, 160);
     const d = clamp(num(state.engineering.pipeIn, 2.5), 1.0, 6.0);
 
-    // one-way distance -> approximate round trip (supply+return) as 2x
     const L = Math.max(0, (eqDist * 2) + fitAllow);
     const Q = Math.max(0, flowGPM);
 
-    // friction (ft)
     const friction = (Q <= 0 || L <= 0)
       ? 0
       : 4.52 * L * Math.pow(Q, 1.85) / (Math.pow(C, 1.85) * Math.pow(d, 4.87));
@@ -414,18 +334,16 @@
   }
 
   function applyEstimatedTDHToPumps(tdh) {
-    const mode = $("#selApplyTDH")?.value || "all";
+    const mode = el.selApplyTDH?.value || "all";
 
     state.pumps.forEach((p) => {
       const sys = p.system;
-
       const match =
         mode === "all" ||
         (mode === "shared" && sys === "Shared") ||
         (mode === "pool" && sys === "Pool") ||
         (mode === "water" && sys === "Water") ||
         (mode === "spa" && sys === "Spa");
-
       if (match) p.tdh = round1(tdh);
     });
   }
@@ -494,6 +412,45 @@
     el.inSpaTDH.value = state.spa.spaTDH ?? 50;
   }
 
+  function setBadge(elm, text, kind) {
+    if (!elm) return;
+    elm.textContent = text;
+    elm.classList.remove("pass", "close", "fail", "badge");
+    elm.classList.add("badge");
+    if (kind) elm.classList.add(kind);
+  }
+
+  function pumpPass(pump, tdh, req) {
+    const best = pickBestRPMLine(pump.model, tdh, req);
+    return !!best && best.gpm >= req && best.gpm > 0;
+  }
+
+  function anyPumpPassForPoolMode() {
+    const poolReq = calcPoolRequiredFlowGPM();
+    const poolTurn = calcPoolTurnoverFlowGPM();
+    const wf = calcWaterFeaturesFlowGPM();
+    let ok = false;
+
+    state.pumps.forEach((p) => {
+      const tdh = num(p.tdh, 0);
+      if (p.system === "Shared") ok = ok || pumpPass(p, tdh, poolReq);
+      else if (p.system === "Pool") ok = ok || pumpPass(p, tdh, poolTurn);
+      else if (p.system === "Water") ok = ok || pumpPass(p, tdh, wf);
+    });
+    return ok;
+  }
+
+  function anyPumpPassForSpaMode() {
+    if (!state.spa.enabled) return false;
+    const spaReq = calcSpaRequiredFlowGPM();
+    const spaTDH = num(state.spa.spaTDH, 50);
+
+    if (state.spa.setup === "shared") {
+      return state.pumps.some((p) => p.system === "Shared" && pumpPass(p, spaTDH, spaReq));
+    }
+    return state.pumps.some((p) => p.system === "Spa" && pumpPass(p, spaTDH, spaReq));
+  }
+
   function renderSummary() {
     const poolTurn = round1(calcPoolTurnoverFlowGPM());
     const wfFlow = round1(calcWaterFeaturesFlowGPM());
@@ -506,6 +463,7 @@
     const spaJets = round1(calcSpaJetsFlowGPM());
     const spaTurn = round1(calcSpaTurnoverFlowGPM());
     const spaReq = round1(calcSpaRequiredFlowGPM());
+
     el.outSpaJets.textContent = `${spaJets} GPM`;
     el.outSpaTurn.textContent = `${spaTurn} GPM`;
     el.outSpaReq.textContent = `${spaReq} GPM`;
@@ -515,9 +473,6 @@
       ? `Required: ${spaReq} GPM @ ${round1(num(state.spa.spaTDH, 50))} ft`
       : `Required: —`;
 
-    // Mode badges:
-    // Pool Mode pass if there exists at least one pump assigned to Shared/Pool/Water that can meet its system req at its TDH
-    // Spa Mode pass if Spa enabled and (if shared setup) a Shared pump meets spa req @ spaTDH, else a Spa pump meets it
     const poolModePass = anyPumpPassForPoolMode();
     setBadge(el.badgePoolMode, poolModePass ? "PASS" : "CLOSE", poolModePass ? "pass" : "close");
 
@@ -525,7 +480,6 @@
     if (!state.spa.enabled) setBadge(el.badgeSpaMode, "—", "close");
     else setBadge(el.badgeSpaMode, spaModePass ? "PASS" : "CLOSE", spaModePass ? "pass" : "close");
 
-    // TDH badge (estimator)
     if (el.tdhBadge) {
       const tdh = state.engineering.estimatedTDH;
       if (Number.isFinite(tdh)) {
@@ -537,14 +491,6 @@
     }
   }
 
-  function setBadge(elm, text, kind) {
-    if (!elm) return;
-    elm.textContent = text;
-    elm.classList.remove("pass", "close", "fail", "badge");
-    elm.classList.add("badge");
-    if (kind) elm.classList.add(kind);
-  }
-
   function renderPumps() {
     el.pumpsList.innerHTML = "";
     const modelKeys = Object.keys(curves);
@@ -553,13 +499,6 @@
       const reqFlow = systemRequiredFlow(p.system);
       const best = pickBestRPMLine(p.model, num(p.tdh, 0), reqFlow);
       const canMeet = !!best && best.gpm >= reqFlow && best.gpm > 0;
-      const statusText = canMeet ? "PASS" : "CLOSE";
-      const statusKind = canMeet ? "pass" : "close";
-
-      const bestRpm = best?.line?.rpm ? `${best.line.rpm}` : "—";
-      const bestGpm = best?.gpm ? round1(best.gpm) : 0;
-      const tdh = round1(num(p.tdh, 0));
-      const resultText = best ? `${bestRpm} RPM | ${tdh} ft @ ${bestGpm} GPM` : "—";
 
       const row = document.createElement("div");
       row.className = "pumpRow";
@@ -580,7 +519,7 @@
         </div>
         <div><input data-k="tdh" type="number" min="0" step="0.5" /></div>
         <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-          <span class="badge ${statusKind}">${statusText}</span>
+          <span class="badge ${canMeet ? "pass" : "close"}">${canMeet ? "PASS" : "CLOSE"}</span>
         </div>
         <div style="display:flex;justify-content:flex-end"><button class="xbtn" data-act="rm">✕</button></div>
       `;
@@ -596,25 +535,10 @@
       selSys.value = p.system;
       inTDH.value = p.tdh;
 
-      selModel.addEventListener("change", () => {
-        p.model = selModel.value;
-        state.ui.selectedPumpIndex = idx;
-        persistAndRecalc();
-      });
-      inQty.addEventListener("input", () => {
-        p.qty = Math.max(1, Math.round(num(inQty.value, 1)));
-        persistAndRecalc();
-      });
-      selSys.addEventListener("change", () => {
-        // keep internal values consistent
-        const v = selSys.value;
-        p.system = (v === "Water") ? "Water" : v;
-        persistAndRecalc();
-      });
-      inTDH.addEventListener("input", () => {
-        p.tdh = num(inTDH.value, 0);
-        persistAndRecalc();
-      });
+      selModel.addEventListener("change", () => { p.model = selModel.value; state.ui.selectedPumpIndex = idx; persistAndRecalc(); });
+      inQty.addEventListener("input", () => { p.qty = Math.max(1, Math.round(num(inQty.value, 1))); persistAndRecalc(); });
+      selSys.addEventListener("change", () => { p.system = selSys.value; persistAndRecalc(); });
+      inTDH.addEventListener("input", () => { p.tdh = num(inTDH.value, 0); persistAndRecalc(); });
 
       row.addEventListener("click", (e) => {
         if (e.target && (e.target.tagName === "SELECT" || e.target.tagName === "INPUT" || e.target.tagName === "BUTTON")) return;
@@ -628,10 +552,12 @@
         persistAndRecalc();
       });
 
-      // show result text below row (like tooltip)
+      const bestRpm = best?.line?.rpm ? `${best.line.rpm}` : "—";
+      const bestGpm = best?.gpm ? round1(best.gpm) : 0;
+      const tdh = round1(num(p.tdh, 0));
       const extra = document.createElement("div");
       extra.style.cssText = "margin:-2px 0 6px 0;color:rgba(255,255,255,.75);font-size:12px;padding-left:4px";
-      extra.textContent = resultText;
+      extra.textContent = best ? `${bestRpm} RPM | ${tdh} ft @ ${bestGpm} GPM` : "—";
 
       el.pumpsList.appendChild(row);
       el.pumpsList.appendChild(extra);
@@ -687,14 +613,12 @@
 
     drawAxes(bounds);
 
-    // title
     ctx.save();
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = "bold 14px system-ui";
     ctx.fillText(model.modelLabel || pump.model, 16, 16);
     ctx.restore();
 
-    // curves
     const palette = [
       "rgba(86, 204, 242, 0.95)",
       "rgba(242, 86, 144, 0.95)",
@@ -712,9 +636,7 @@
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(xToPx(pts[0].gpm), yToPx(pts[0].tdh));
-      for (let k = 1; k < pts.length; k++) {
-        ctx.lineTo(xToPx(pts[k].gpm), yToPx(pts[k].tdh));
-      }
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(xToPx(pts[k].gpm), yToPx(pts[k].tdh));
       ctx.stroke();
 
       const mid = pts[Math.floor(pts.length / 2)];
@@ -724,7 +646,6 @@
       ctx.restore();
     });
 
-    // Target TDH (horizontal)
     const targetTDH = num(pump.tdh, 0);
     ctx.save();
     ctx.setLineDash([6, 6]);
@@ -740,7 +661,6 @@
     ctx.fillText(`Target TDH: ${round1(targetTDH)} ft`, bounds.left + 8, yToPx(targetTDH) - 8);
     ctx.restore();
 
-    // Required flow (vertical)
     const req = systemRequiredFlow(pump.system);
     ctx.save();
     ctx.setLineDash([4, 6]);
@@ -755,7 +675,6 @@
     ctx.fillText(`Required: ${round1(req)} GPM`, xToPx(req) + 6, bounds.top + 18);
     ctx.restore();
 
-    // Operating point (best rpm line)
     const best = pickBestRPMLine(pump.model, targetTDH, req);
     if (best && best.line && best.line.points?.length >= 2) {
       const opGpm = gpmAtTDH(best.line.points, targetTDH);
@@ -769,18 +688,6 @@
         xToPx(opGpm) + 8, yToPx(targetTDH) - 10);
       ctx.restore();
     }
-
-    // axis labels
-    ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,0.65)";
-    ctx.font = "12px system-ui";
-    ctx.fillText("Flow (GPM)", bounds.left + bounds.w / 2 - 32, el.canvas.height - 10);
-    ctx.save();
-    ctx.translate(14, bounds.top + bounds.h / 2 + 26);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillText("TDH (ft)", 0, 0);
-    ctx.restore();
-    ctx.restore();
   }
 
   /* -----------------------------
@@ -789,10 +696,8 @@
   function openCurvesModal() {
     el.curvesModal.classList.remove("hidden");
     state.ui.curvesModalOpen = true;
-
     const pump = state.pumps[state.ui.selectedPumpIndex] || state.pumps[0];
     if (pump && curves[pump.model]) state.ui.curvesActiveModel = pump.model;
-
     renderCurvesModal();
   }
 
@@ -804,23 +709,17 @@
   function renderCurvesModal() {
     const modelKeys = Object.keys(curves);
     if (!modelKeys.length) return;
-
     if (!curves[state.ui.curvesActiveModel]) state.ui.curvesActiveModel = modelKeys[0];
 
-    // tabs
     el.curveTabs.innerHTML = "";
     modelKeys.forEach((k) => {
       const b = document.createElement("button");
       b.className = "tab" + (k === state.ui.curvesActiveModel ? " active" : "");
       b.textContent = curves[k].modelLabel || k;
-      b.addEventListener("click", () => {
-        state.ui.curvesActiveModel = k;
-        renderCurvesModal();
-      });
+      b.addEventListener("click", () => { state.ui.curvesActiveModel = k; renderCurvesModal(); });
       el.curveTabs.appendChild(b);
     });
 
-    // body
     const model = curves[state.ui.curvesActiveModel];
     el.curveEditorBody.innerHTML = "";
 
@@ -886,7 +785,6 @@
   }
 
   function saveCurvesAndClose() {
-    // clean: ensure points arrays
     for (const k of Object.keys(curves)) {
       curves[k].rpmLines = (curves[k].rpmLines || []).map((l) => ({
         rpm: Math.round(num(l.rpm, 0)),
@@ -899,51 +797,7 @@
   }
 
   /* -----------------------------
-     PASS logic for modes
-  ----------------------------- */
-  function pumpPass(pump, tdh, req) {
-    const best = pickBestRPMLine(pump.model, tdh, req);
-    return !!best && best.gpm >= req && best.gpm > 0;
-  }
-
-  function anyPumpPassForPoolMode() {
-    // pool mode needs:
-    // - Shared pumps should meet Pool Required
-    // - Pool pumps should meet Pool Turnover
-    // - Water pumps should meet Water Features
-    const poolReq = calcPoolRequiredFlowGPM();
-    const poolTurn = calcPoolTurnoverFlowGPM();
-    const wf = calcWaterFeaturesFlowGPM();
-
-    let ok = false;
-
-    state.pumps.forEach((p) => {
-      const tdh = num(p.tdh, 0);
-      if (p.system === "Shared") ok = ok || pumpPass(p, tdh, poolReq);
-      else if (p.system === "Pool") ok = ok || pumpPass(p, tdh, poolTurn);
-      else if (p.system === "Water") ok = ok || pumpPass(p, tdh, wf);
-    });
-
-    // if no pumps at all, fail
-    return ok;
-  }
-
-  function anyPumpPassForSpaMode() {
-    if (!state.spa.enabled) return false;
-
-    const spaReq = calcSpaRequiredFlowGPM();
-    const spaTDH = num(state.spa.spaTDH, 50);
-
-    if (state.spa.setup === "shared") {
-      // must have a Shared pump that can do spaReq @ spaTDH
-      return state.pumps.some((p) => p.system === "Shared" && pumpPass(p, spaTDH, spaReq));
-    }
-    // separate: must have a Spa pump that can do spaReq @ spaTDH
-    return state.pumps.some((p) => p.system === "Spa" && pumpPass(p, spaTDH, spaReq));
-  }
-
-  /* -----------------------------
-     Events / Persist
+     Bind + RenderAll
   ----------------------------- */
   function persistAndRecalc() {
     saveAll();
@@ -981,7 +835,7 @@
       persistAndRecalc();
     });
 
-    // Curve editor
+    // Curves
     el.btnEditCurves.addEventListener("click", openCurvesModal);
     el.btnCloseCurves.addEventListener("click", closeCurvesModal);
     el.btnAddRPM.addEventListener("click", addRPMLine);
@@ -995,10 +849,8 @@
     el.inElev.addEventListener("input", () => { state.engineering.elev = el.inElev.value; saveAll(); });
     el.inEquipHead.addEventListener("input", () => { state.engineering.equipHead = num(el.inEquipHead.value, 0); saveAll(); });
     el.inC.addEventListener("input", () => { state.engineering.C = num(el.inC.value, 140); saveAll(); });
-    el.selApplyTDH.addEventListener("change", () => saveAll());
 
     el.btnEstimateTDH.addEventListener("click", () => {
-      // choose a flow to estimate TDH for: use Pool Required by default
       const flow = calcPoolRequiredFlowGPM();
       const tdh = estimateTDHForFlow(flow);
       applyEstimatedTDHToPumps(tdh);
@@ -1042,12 +894,12 @@
       }
     });
 
+    // ✅ NEW: Refresh button
+    if (el.btnRecalc) el.btnRecalc.addEventListener("click", () => persistAndRecalc());
+
     el.btnPrint.addEventListener("click", () => window.print());
   }
 
-  /* -----------------------------
-     Render All
-  ----------------------------- */
   function renderEngineeringInputs() {
     el.inEqDist.value = state.engineering.eqDist ?? "";
     el.inFitAllow.value = state.engineering.fitAllow ?? 60;
@@ -1055,7 +907,6 @@
     el.inElev.value = state.engineering.elev ?? "";
     el.inEquipHead.value = state.engineering.equipHead ?? 10;
     el.inC.value = state.engineering.C ?? 140;
-    // selApplyTDH already exists (keep)
   }
 
   function renderAll() {
@@ -1066,8 +917,6 @@
     renderEngineeringInputs();
     renderSummary();
     renderCurveViewer();
-
-    // modal live updates if open
     if (state.ui.curvesModalOpen) renderCurvesModal();
   }
 
