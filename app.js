@@ -1,11 +1,12 @@
 /* ============================================================
-   Pool Pump Sizing Tool - app.js (FULL WORKING + Qty FIX + Reason)
+   Pool Pump Sizing Tool - app.js (FULL WORKING + Qty FIX + Reason + TDH Estimate FIX)
    - Pumps + Water Features + SPA calculations
-   - PASS/CLOSE per pump
-   - FIX: Pump Qty affects PASS/CLOSE (capacity = curveGPM * qty)
-   - NEW: Status shows detailed reason (Req vs Cap, RPM, TDH too high)
+   - PASS/CLOSE per pump + detailed reason
+   - Pump Qty affects PASS/CLOSE (capacity = curveGPM * qty)
    - Curve editor + Canvas curve drawing
-   - Optional TDH estimator (Hazen–Williams approx)
+   - TDH estimator improved:
+       * Estimates flow based on "Apply TDH to" scope (pool/water/spa/shared/all)
+       * Warns & prevents applying absurd TDH/Flow
    ============================================================ */
 
 (() => {
@@ -316,7 +317,6 @@
       return { pass: false, text: `CLOSE (TDH too high: max ${round1(maxTDH)} < ${round1(tdh)})` };
     }
 
-    // evaluate each RPM line
     const candidates = model.rpmLines.map((line) => {
       const per = gpmAtTDH(line.points || [], tdh);
       return { line, per, total: per * qty };
@@ -326,7 +326,6 @@
       return { pass: false, text: `CLOSE (No flow @ ${round1(tdh)} ft)` };
     }
 
-    // lowest RPM that passes
     const ok = candidates.filter(x => x.total >= req);
     if (ok.length) {
       ok.sort((a, b) => (a.line.rpm || 0) - (b.line.rpm || 0));
@@ -338,7 +337,6 @@
       };
     }
 
-    // choose max capacity to explain why close
     candidates.sort((a, b) => b.total - a.total);
     const best = candidates[0];
     return {
@@ -349,7 +347,9 @@
   }
 
   /* -----------------------------
-     TDH Estimator (approx)
+     TDH Estimator (approx, Hazen–Williams)
+     + FIX: estimate flow based on selected scope
+     + Guard rails for absurd inputs
   ----------------------------- */
   function estimateTDHForFlow(flowGPM) {
     const eqDist = num(state.engineering.eqDist, 0);
@@ -375,6 +375,19 @@
     return tdh;
   }
 
+  function estimateFlowByScope(scope) {
+    // scope values expected (based on your select):
+    // "all" | "shared" | "pool" | "water" | "spa"
+    if (scope === "pool") return calcPoolTurnoverFlowGPM();
+    if (scope === "water") return calcWaterFeaturesFlowGPM();
+    if (scope === "spa") return calcSpaRequiredFlowGPM();
+    if (scope === "shared") return calcPoolRequiredFlowGPM();
+
+    // all: conservative = max required of all pumps
+    const flows = state.pumps.map(p => systemRequiredFlow(p.system)).filter(f => Number.isFinite(f));
+    return flows.length ? Math.max(...flows) : calcPoolRequiredFlowGPM();
+  }
+
   function applyEstimatedTDHToPumps(tdh) {
     const mode = el.selApplyTDH?.value || "all";
     state.pumps.forEach((p) => {
@@ -387,6 +400,38 @@
         (mode === "spa" && sys === "Spa");
       if (match) p.tdh = round1(tdh);
     });
+  }
+
+  function guardTDHEstimate(flow, tdh) {
+    // These are practical guard rails for pool/spa sizing
+    // If user inputs create absurd numbers, warn and do not apply automatically.
+    if (!Number.isFinite(flow) || flow <= 0) {
+      alert("TDH Estimate: Flow is zero/invalid. Check your inputs.");
+      return false;
+    }
+    if (flow > 400) {
+      alert(
+        "TDH Estimate WARNING:\n" +
+        `Required Flow is extremely high (${round1(flow)} GPM).\n` +
+        "This will produce unrealistic TDH.\n\n" +
+        "Check Water Features inputs (Qty/Width/GPM per ft)."
+      );
+      return false;
+    }
+    if (!Number.isFinite(tdh) || tdh <= 0) {
+      alert("TDH Estimate: TDH is invalid. Check pipe size / distance / inputs.");
+      return false;
+    }
+    if (tdh > 200) {
+      alert(
+        "TDH Estimate WARNING:\n" +
+        `Estimated TDH is extremely high (${round1(tdh)} ft).\n` +
+        "This is not realistic for typical pool plumbing.\n\n" +
+        "Reduce Flow, Distance, or check Water Features inputs."
+      );
+      return false;
+    }
+    return true;
   }
 
   /* -----------------------------
@@ -465,32 +510,15 @@
   }
 
   function anyPumpPassForPoolMode() {
-    const poolReq = calcPoolRequiredFlowGPM();
-    const poolTurn = calcPoolTurnoverFlowGPM();
-    const wf = calcWaterFeaturesFlowGPM();
-    let ok = false;
-
-    state.pumps.forEach((p) => {
-      const tdh = num(p.tdh, 0);
-      const qty = Math.max(1, Math.round(num(p.qty, 1)));
-      // use statusDetails to ensure same logic, but here we do quick checks:
-      const reqFlow =
-        p.system === "Shared" ? poolReq :
-        p.system === "Pool" ? poolTurn :
-        p.system === "Water" ? wf : 0;
-
-      const det = statusDetails({ ...p, qty, tdh, system: p.system });
-      // statusDetails uses systemRequiredFlow internally, so this is just for consistency.
-      if (p.system === "Shared" || p.system === "Pool" || p.system === "Water") ok = ok || det.pass;
+    return state.pumps.some((p) => {
+      if (!(p.system === "Shared" || p.system === "Pool" || p.system === "Water")) return false;
+      return statusDetails(p).pass;
     });
-    return ok;
   }
 
   function anyPumpPassForSpaMode() {
     if (!state.spa.enabled) return false;
-    const spaReq = calcSpaRequiredFlowGPM();
     const spaTDH = num(state.spa.spaTDH, 50);
-
     if (state.spa.setup === "shared") {
       return state.pumps.some((p) => p.system === "Shared" && statusDetails({ ...p, tdh: spaTDH }).pass);
     }
@@ -542,7 +570,6 @@
     const modelKeys = Object.keys(curves);
 
     state.pumps.forEach((p, idx) => {
-      const reqFlow = systemRequiredFlow(p.system);
       const qty = Math.max(1, Math.round(num(p.qty, 1)));
       const det = statusDetails(p);
 
@@ -720,7 +747,7 @@
   }
 
   /* -----------------------------
-     Curves Modal (same as before)
+     Curves Modal
   ----------------------------- */
   function openCurvesModal() {
     el.curvesModal.classList.remove("hidden");
@@ -866,7 +893,7 @@
     el.btnResetCurves.addEventListener("click", resetCurves);
     el.btnSaveCurves.addEventListener("click", saveCurvesAndClose);
 
-    // Engineering
+    // Engineering (save only; recalc when needed)
     el.inEqDist.addEventListener("input", () => { state.engineering.eqDist = el.inEqDist.value; saveAll(); });
     el.inFitAllow.addEventListener("input", () => { state.engineering.fitAllow = num(el.inFitAllow.value, 0); saveAll(); });
     el.selPipeIn.addEventListener("change", () => { state.engineering.pipeIn = num(el.selPipeIn.value, 2.5); saveAll(); });
@@ -874,9 +901,18 @@
     el.inEquipHead.addEventListener("input", () => { state.engineering.equipHead = num(el.inEquipHead.value, 0); saveAll(); });
     el.inC.addEventListener("input", () => { state.engineering.C = num(el.inC.value, 140); saveAll(); });
 
+    // ✅ FIXED TDH Estimate behavior
     el.btnEstimateTDH.addEventListener("click", () => {
-      const flow = calcPoolRequiredFlowGPM();
-      const tdh = estimateTDHForFlow(flow);
+      const scope = el.selApplyTDH?.value || "all";
+      const flowForEst = estimateFlowByScope(scope);
+      const tdh = estimateTDHForFlow(flowForEst);
+
+      // guard rails: don't apply absurd results
+      if (!guardTDHEstimate(flowForEst, tdh)) {
+        renderSummary(); // update badge text
+        return;
+      }
+
       applyEstimatedTDHToPumps(tdh);
       persistAndRecalc();
     });
