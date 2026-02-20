@@ -10,6 +10,11 @@
       - Groups pumps by system and sums their capacities
       - Shows PASS/FAIL for each pump based on its system health
       - Keeps reason details (required vs capacity, TDH max, etc.)
+   ✅ UI/Logic improvements:
+   4) Clarifies Turnover "Custom" meaning (override hours)
+   5) Bubbler: removes Width practically
+      - Width auto-set to 1 and disabled
+      - Row GPM = Qty * GPM (treats "GPM/ft" input as "GPM each" for bubbler)
    ============================================================ */
 
 (() => {
@@ -29,6 +34,8 @@
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const round1 = (x) => Math.round((x + Number.EPSILON) * 10) / 10;
   const safeId = () => Math.random().toString(36).slice(2, 10);
+
+  const isBubblerType = (t) => String(t || "").trim().toLowerCase() === "bubbler";
 
   function parsePoints(text) {
     const lines = String(text || "")
@@ -228,6 +235,11 @@
       const c = localStorage.getItem(LS_CURVES);
       if (c) curves = JSON.parse(c);
     } catch {}
+
+    // Normalize bubbler rows after load (ensure width=1)
+    state.waterFeatures.forEach((wf) => {
+      if (isBubblerType(wf.type)) wf.width = 1;
+    });
   }
 
   function saveAll() {
@@ -260,8 +272,16 @@
 
   function waterFeaturesFlow() {
     return state.waterFeatures.reduce((sum, wf) => {
-      const row = num(wf.qty, 0) * num(wf.width, 0) * num(wf.gpmPerFt, 0);
-      return sum + row;
+      const qty = num(wf.qty, 0);
+      const gpmRate = num(wf.gpmPerFt, 0);
+
+      // ✅ Bubbler: treat as Qty * GPM(each). Width ignored.
+      if (isBubblerType(wf.type)) {
+        return sum + (qty * gpmRate);
+      }
+
+      const width = num(wf.width, 0);
+      return sum + (qty * width * gpmRate);
     }, 0);
   }
 
@@ -302,8 +322,6 @@
 
   function poolModeRequiredTotal() {
     // For display: total required in pool mode depends on allocation
-    // If Water pumps exist: Pool mode required = Pool turnover + Water features (separately handled)
-    // If none: required still equals Shared requirement (pool + wf)
     return poolTurnoverFlow() + waterFeaturesFlow();
   }
 
@@ -364,7 +382,6 @@
       for (const p of pumps) {
         const c = bestCapacityAtTDH(p);
         if (!c.ok) {
-          // if pump exists but can't operate at TDH, mark as hard fail contributor
           hardFail = true;
           details.push({ pumpId: p.id, ok: false, text: `Pump cannot run @ TDH ${round1(num(p.tdh,0))} ft (max ${round1(c.maxTDH)} ft)` });
           continue;
@@ -373,7 +390,6 @@
         details.push({ pumpId: p.id, ok: true, text: `Cap ${round1(c.capTotal)} GPM @ ${c.best.line.label || (c.best.line.rpm+" RPM")} (Qty ${Math.max(1,Math.round(num(p.qty,1)))})` });
       }
 
-      // If system has NO pumps assigned, then it's FAIL if req>0
       const hasP = pumps.length > 0;
       const pass = hasP && !hardFail && cap >= req;
       const fail = req > 0 && !pass;
@@ -429,13 +445,11 @@
     if (scope === "spa") return requiredFlowForSystem("Spa");
     if (scope === "shared") return requiredFlowForSystem("Shared");
 
-    // all: max required among systems (practical)
     const reqs = ["Shared","Pool","Water","Spa"].map(s => requiredFlowForSystem(s));
     return Math.max(...reqs, 0);
   }
 
   function setTdhWarningOnce(message, sig) {
-    // only update if changed
     if (state.ui.lastTdhWarnSig === sig) return;
     state.ui.lastTdhWarnSig = sig;
     state.engineering.warnText = message || "";
@@ -445,7 +459,6 @@
     const f = round1(flow);
     const t = round1(tdh);
 
-    // guard rails
     if (!Number.isFinite(flow) || flow <= 0) {
       setTdhWarningOnce("TDH Estimate: Flow is zero/invalid. Check inputs.", `z:${f}:${t}`);
       return false;
@@ -469,7 +482,6 @@
       return false;
     }
 
-    // clear warning when ok
     setTdhWarningOnce("", "ok");
     return true;
   }
@@ -508,12 +520,31 @@
     el.inPoolVol.value = state.project.poolVol ?? "";
     el.selTurnover.value = String(state.project.turnoverH ?? 6);
     el.inTurnCustom.value = state.project.turnoverCustom ?? "";
+
+    // ✅ Clarify "Custom" meaning (override)
+    if (el.inTurnCustom) {
+      el.inTurnCustom.placeholder = "Optional: override turnover hours (e.g., 8)";
+      el.inTurnCustom.title = "Custom turnover hours. If set (>0), it overrides the Turnover dropdown.";
+    }
+    if (el.selTurnover) {
+      el.selTurnover.title = "Turnover hours (used unless Custom overrides it)";
+    }
   }
 
   function renderWaterFeatures() {
     el.wfList.innerHTML = "";
     state.waterFeatures.forEach((wf) => {
-      const rowGpm = round1(num(wf.qty, 0) * num(wf.width, 0) * num(wf.gpmPerFt, 0));
+      const isB = isBubblerType(wf.type);
+
+      // Keep data consistent
+      if (isB) wf.width = 1;
+
+      const qty = num(wf.qty, 0);
+      const gpmRate = num(wf.gpmPerFt, 0);
+      const width = isB ? 1 : num(wf.width, 0);
+
+      const rowGpm = round1(qty * (isB ? 1 : width) * gpmRate); // if bubbler => qty * gpmRate
+
       const row = document.createElement("div");
       row.className = "wfRow";
       row.innerHTML = `
@@ -540,9 +571,37 @@
       inW.value = wf.width;
       inG.value = wf.gpmPerFt;
 
-      selType.addEventListener("change", () => { wf.type = selType.value; persistAndRecalc(); });
+      // ✅ Bubbler behavior: width fixed to 1 and disabled
+      if (isB) {
+        inW.value = 1;
+        inW.disabled = true;
+        inW.title = "Bubbler: Width is not used. Fixed to 1.";
+        inG.title = "Bubbler: this value is treated as GPM per Bubbler (GPM each).";
+      } else {
+        inW.disabled = false;
+        inW.title = "Width (ft)";
+        inG.title = "GPM per ft";
+      }
+
+      selType.addEventListener("change", () => {
+        wf.type = selType.value;
+        if (isBubblerType(wf.type)) wf.width = 1; // enforce
+        persistAndRecalc();
+      });
+
       inQty.addEventListener("input", () => { wf.qty = num(inQty.value, 0); persistAndRecalc(); });
-      inW.addEventListener("input", () => { wf.width = num(inW.value, 0); persistAndRecalc(); });
+
+      inW.addEventListener("input", () => {
+        // if bubbler, ignore edits; keep 1
+        if (isBubblerType(wf.type)) {
+          wf.width = 1;
+          inW.value = 1;
+        } else {
+          wf.width = num(inW.value, 0);
+        }
+        persistAndRecalc();
+      });
+
       inG.addEventListener("input", () => { wf.gpmPerFt = num(inG.value, 0); persistAndRecalc(); });
 
       btnRm.addEventListener("click", () => {
@@ -578,7 +637,6 @@
     const wf = round1(waterFeaturesFlow());
     const poolTotal = round1(poolModeRequiredTotal());
 
-    // ✅ requested: show Pool GPM clearly (this is pool turnover flow)
     el.outPoolTurn.textContent = `${pool} GPM`;
     el.outWFFlow.textContent = `${wf} GPM`;
     el.outPoolReq.textContent = `${poolTotal} GPM`;
@@ -600,7 +658,6 @@
       ? `Required: ${sReq} GPM @ ${round1(num(state.spa.spaTDH, 50))} ft`
       : `Required: —`;
 
-    // ✅ System health affects pool/spa badges
     const H = computeSystemHealth();
     const poolPass =
       (H.Shared.pass || H.Pool.pass || H.Water.pass) &&
@@ -608,10 +665,8 @@
 
     setBadge(el.badgePoolMode, poolPass ? "PASS" : "FAIL", poolPass ? "pass" : "fail");
 
-    // Spa badge unchanged logic (simple)
     if (!state.spa.enabled) setBadge(el.badgeSpaMode, "—", "close");
     else {
-      // if spa setup shared: evaluate shared pumps at spaTDH and spa required
       let spaOk = false;
       const spaTDH = num(state.spa.spaTDH, 50);
       const spaReq2 = spaRequiredFlow();
@@ -640,7 +695,6 @@
       setBadge(el.badgeSpaMode, spaOk ? "PASS" : "FAIL", spaOk ? "pass" : "fail");
     }
 
-    // TDH badge + inline warning
     if (el.tdhBadge) {
       const tdh = state.engineering.estimatedTDH;
       const warn = state.engineering.warnText ? ` | ⚠ ${state.engineering.warnText}` : "";
@@ -664,9 +718,6 @@
       const cap = bestCapacityAtTDH(p);
       const sys = H[p.system];
 
-      // ✅ FAIL enabled:
-      // - If pump can't run at TDH => FAIL
-      // - Else based on its system group PASS/FAIL (sum of pumps)
       let badgeText = "—";
       let badgeKind = "close";
 
@@ -736,7 +787,6 @@
         renderCurveViewer();
       });
 
-      // Detailed reason line
       const extra = document.createElement("div");
       extra.style.cssText = "margin:-2px 0 10px 0;color:rgba(255,255,255,.80);font-size:12px;padding-left:4px;line-height:1.25";
 
@@ -1074,6 +1124,10 @@
           Object.assign(state.ui, parsed.state.ui || {});
         }
         if (parsed.curves) curves = parsed.curves;
+
+        // Normalize bubbler rows after import
+        state.waterFeatures.forEach((wf) => { if (isBubblerType(wf.type)) wf.width = 1; });
+
         persistAndRecalc();
       } catch (e) {
         setTdhWarningOnce("Invalid JSON file", "jsonerr");
